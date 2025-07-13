@@ -52,10 +52,16 @@ exports.googleLogin = async (req, res) => {
           licensePhoto: ''
         });
       } else if (role === 'owner') {
-        await OwnerProfile.create({ 
-          userId: user._id,
-          companyInfoCompleted: false
-        });
+       await OwnerProfile.create({
+  userId: user._id,
+  companyName: 'unknown',
+  companyLocation: 'unknown',
+  gender: 'Not Specified', // ✅ Matches enum
+  photoUrl: '',
+  companyInfoCompleted: false
+});
+
+
       }
     }
 

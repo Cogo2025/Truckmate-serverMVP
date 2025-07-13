@@ -1,15 +1,115 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { authMiddleware } = require('../middleware/authMiddleware');
 const profileController = require('../controllers/profileController');
-const jobController = require('../controllers/jobController'); // Add this line
+const jobController = require('../controllers/jobController');
 
+// ✅ Ensure uploads directory exists
+const uploadDir = 'uploads/';
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// ✅ Setup multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    // Generate unique filename
+    const ext = path.extname(file.originalname);
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${ext}`;
+    cb(null, uniqueName);
+  }
+});
+
+// ✅ File filter for images only
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only image files are allowed (JPEG, JPG, PNG, GIF)'), false);
+  }
+};
+
+// ✅ Configure multer
+const upload = multer({ 
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
+
+// ✅ Error handling middleware for multer
+const handleMulterError = (err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File size too large. Maximum 5MB allowed.' });
+    }
+    return res.status(400).json({ error: `Upload error: ${err.message}` });
+  }
+  
+  if (err.message === 'Only image files are allowed (JPEG, JPG, PNG, GIF)') {
+    return res.status(400).json({ error: err.message });
+  }
+  
+  next(err);
+};
+
+// ✅ Driver Profile Routes
 router.get('/driver', authMiddleware, profileController.getDriverProfile);
-router.post('/driver', authMiddleware, profileController.createDriverProfile);
-router.patch('/driver', authMiddleware, profileController.updateDriverProfile);
-router.post('/owner', authMiddleware, profileController.createOwnerProfile);
+router.post('/driver', authMiddleware, upload.single('photo'), handleMulterError, profileController.createDriverProfile);
+router.patch('/driver', authMiddleware, upload.single('photo'), handleMulterError, profileController.updateDriverProfile);
+
+// ✅ Owner Profile Routes
 router.get('/owner', authMiddleware, profileController.getOwnerProfile);
-router.get('/owner/:ownerId/jobs', authMiddleware, jobController.getJobsByOwnerId);
+router.post('/owner', authMiddleware, upload.single('photo'), handleMulterError, profileController.createOwnerProfile);
+router.patch('/owner', authMiddleware, upload.single('photo'), handleMulterError, profileController.updateOwnerProfile);
 router.get('/owner/:ownerId', authMiddleware, profileController.getOwnerProfileById);
+router.get('/owner/:ownerId/jobs', authMiddleware, jobController.getJobsByOwnerId);
+
+// ✅ Delete profile photo route
+router.delete('/photo', authMiddleware, profileController.deleteProfilePhoto);
+
+// ✅ ADD THESE TEST ROUTES HERE (Step 3)
+// Test route to check image access
+router.get('/test-image/:filename', profileController.testImageAccess);
+
+// Test route to list all uploaded files
+router.get('/test-uploads', (req, res) => {
+  try {
+    const uploadsDir = path.join(__dirname, '../uploads');
+    const files = fs.readdirSync(uploadsDir);
+    
+    const fileList = files.map(file => ({
+      filename: file,
+      url: `${process.env.BASE_URL || 'http://192.168.29.138:5000'}/uploads/${file}`,
+      path: path.join(uploadsDir, file)
+    }));
+    
+    res.json({
+      success: true,
+      message: `Found ${files.length} files`,
+      files: fileList,
+      baseUrl: process.env.BASE_URL || 'http://192.168.29.138:5000'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Health check route
+router.get('/health', (req, res) => {
+  res.status(200).json({ 
+    message: 'Profile routes are working',
+    timestamp: new Date().toISOString(),
+    baseUrl: process.env.BASE_URL || 'http://192.168.29.138:5000'
+  });
+});
 
 module.exports = router;

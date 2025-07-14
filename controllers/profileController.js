@@ -1,10 +1,9 @@
 const DriverProfile = require('../models/DriverProfile');
 const OwnerProfile = require('../models/OwnerProfile');
 const JobPost = require('../models/JobPost');
+const User = require('../models/User'); // Add this import for user updates
 const path = require('path');
 const fs = require('fs');
-
-
 
 // ✅ Helper function to generate proper photo URLs
 const generatePhotoUrl = (filename) => {
@@ -12,7 +11,83 @@ const generatePhotoUrl = (filename) => {
   return `${baseUrl}/uploads/${filename}`;
 };
 
+// ✅ NEW: Update user basic info (name, phone)
+const updateUserInfo = async (req, res) => {
+  try {
+    console.log('📝 Updating user info for user:', req.userId);
+    console.log('Request body:', req.body);
+    
+    const { name, phone } = req.body;
+    
+    // Validate required fields
+    if (!name || !phone) {
+      return res.status(400).json({ 
+        error: "Name and phone are required" 
+      });
+    }
 
+    // Validate phone number format (basic validation)
+    const phoneRegex = /^[+]?[\d\s\-\(\)]{10,}$/;
+    if (!phoneRegex.test(phone.trim())) {
+      return res.status(400).json({ 
+        error: "Invalid phone number format" 
+      });
+    }
+
+    // Check if phone number already exists for another user
+    // Use googleId instead of _id since req.userId contains the googleId
+    const existingUser = await User.findOne({ 
+      phone: phone.trim(), 
+      googleId: { $ne: req.userId } // Changed from _id to googleId
+    });
+    
+    if (existingUser) {
+      return res.status(400).json({ 
+        error: "Phone number already in use by another user" 
+      });
+    }
+
+    // Update user info - use googleId instead of _id
+    const updatedUser = await User.findOneAndUpdate(
+      { googleId: req.userId }, // Changed from _id to googleId
+      { 
+        name: name.trim(),
+        phone: phone.trim()
+      },
+      { 
+        new: true, 
+        runValidators: true 
+      }
+    ).select('-password'); // Exclude password from response
+
+    if (!updatedUser) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    console.log('✅ User info updated successfully:', updatedUser.googleId);
+    res.status(200).json({
+      success: true,
+      message: "User information updated successfully",
+      user: updatedUser
+    });
+  } catch (err) {
+    console.error('❌ Error updating user info:', err);
+    
+    // Handle specific validation errors
+    if (err.name === 'ValidationError') {
+      const errors = Object.values(err.errors).map(e => e.message);
+      return res.status(400).json({ 
+        error: "Validation failed", 
+        details: errors 
+      });
+    }
+    
+    res.status(500).json({ 
+      error: "Failed to update user information", 
+      details: err.message 
+    });
+  }
+};
 
 const createOwnerProfile = async (req, res) => {
   try {
@@ -81,6 +156,7 @@ const createOwnerProfile = async (req, res) => {
     });
   }
 };
+
 // ✅ Get owner profile
 const getOwnerProfile = async (req, res) => {
   try {
@@ -153,7 +229,6 @@ const updateOwnerProfile = async (req, res) => {
   }
 };
 
-
 // ✅ Get owner profile by ID (for other users to view)
 const getOwnerProfileById = async (req, res) => {
   try {
@@ -206,7 +281,7 @@ const createDriverProfile = async (req, res) => {
     // Handle photo upload
     let photoUrl = '';
     if (req.file) {
-      photoUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/uploads/${req.file.filename}`;
+      photoUrl = generatePhotoUrl(req.file.filename);
       console.log('📸 Photo uploaded:', photoUrl);
     }
 
@@ -285,7 +360,7 @@ const updateDriverProfile = async (req, res) => {
         }
       }
       
-      updateData.photoUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/uploads/${req.file.filename}`;
+      updateData.photoUrl = generatePhotoUrl(req.file.filename);
     }
 
     const profile = await DriverProfile.findOneAndUpdate(
@@ -380,10 +455,6 @@ const testImageAccess = async (req, res) => {
   }
 };
 
-
-
-
-
 module.exports = {
   createDriverProfile,
   createOwnerProfile,
@@ -394,5 +465,6 @@ module.exports = {
   getOwnerProfileById,
   getOwnerJobs,
   deleteProfilePhoto,
-   testImageAccess,
+  testImageAccess,
+  updateUserInfo // Add this new function to exports
 };

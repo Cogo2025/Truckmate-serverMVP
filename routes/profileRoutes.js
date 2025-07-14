@@ -61,6 +61,9 @@ const handleMulterError = (err, req, res, next) => {
   next(err);
 };
 
+// ✅ NEW: User info update route
+router.patch('/user', authMiddleware, profileController.updateUserInfo);
+
 // ✅ Driver Profile Routes
 router.get('/driver', authMiddleware, profileController.getDriverProfile);
 router.post('/driver', authMiddleware, upload.single('photo'), handleMulterError, profileController.createDriverProfile);
@@ -76,8 +79,7 @@ router.get('/owner/:ownerId/jobs', authMiddleware, jobController.getJobsByOwnerI
 // ✅ Delete profile photo route
 router.delete('/photo', authMiddleware, profileController.deleteProfilePhoto);
 
-// ✅ ADD THESE TEST ROUTES HERE (Step 3)
-// Test route to check image access
+// ✅ Test routes
 router.get('/test-image/:filename', profileController.testImageAccess);
 
 // Test route to list all uploaded files

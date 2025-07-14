@@ -20,4 +20,5 @@ const jobSchema = new mongoose.Schema({
   ownerId: { type: String, ref: 'User' } // Store Google ID (sub)
 }, { timestamps: true });
 
-module.exports = mongoose.model('Job', jobSchema);
+// Make sure the model name matches what's being imported
+module.exports = mongoose.model('JobPost', jobSchema);

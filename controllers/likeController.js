@@ -1,5 +1,6 @@
 const Like = require('../models/Like');
 const JobPost = require('../models/JobPost');
+const OwnerProfile = require('../models/OwnerProfile');
 
 exports.likeItem = async (req, res) => {
   try {
@@ -69,7 +70,7 @@ exports.unlikeItem = async (req, res) => {
 
 exports.getUserLikes = async (req, res) => {
   try {
-    console.log('Fetching liked jobs for user:', req.userId); // Log the user ID
+    console.log('Fetching liked jobs for user:', req.userId);
     
     // Get all likes by current user
     const likes = await Like.find({ 
@@ -77,7 +78,7 @@ exports.getUserLikes = async (req, res) => {
       likedType: 'job'
     }).lean().exec();
 
-    console.log('Found likes:', likes.length); // Log number of likes found
+    console.log('Found likes:', likes.length);
     
     if (!likes || likes.length === 0) {
       console.log('No likes found for user');
@@ -88,13 +89,47 @@ exports.getUserLikes = async (req, res) => {
     const jobIds = likes.map(like => like.likedItemId);
     console.log('Job IDs to fetch:', jobIds);
 
+    // First get the jobs
     const jobs = await JobPost.find({ _id: { $in: jobIds } })
-      .populate('ownerId', 'companyName photoUrl')
       .lean()
       .exec();
 
-    console.log('Jobs found:', jobs.length); // Log number of jobs found
-    res.status(200).json(jobs);
+    console.log('Jobs found:', jobs.length);
+
+    // Then get owner profiles for each job
+    const jobsWithOwnerInfo = await Promise.all(
+      jobs.map(async (job) => {
+        try {
+          // Get owner profile using the ownerId (which is a string Google ID)
+          const ownerProfile = await OwnerProfile.findOne({ userId: job.ownerId }).lean().exec();
+          
+          console.log(`Owner profile for job ${job._id}:`, ownerProfile ? 'Found' : 'Not found');
+          
+          return {
+            ...job,
+            ownerId: ownerProfile ? {
+              companyName: ownerProfile.companyName,
+              photoUrl: ownerProfile.photoUrl
+            } : {
+              companyName: 'Unknown Company',
+              photoUrl: null
+            }
+          };
+        } catch (error) {
+          console.error('Error fetching owner profile for job:', job._id, error);
+          return {
+            ...job,
+            ownerId: {
+              companyName: 'Unknown Company',
+              photoUrl: null
+            }
+          };
+        }
+      })
+    );
+
+    console.log('Jobs with owner info prepared:', jobsWithOwnerInfo.length);
+    res.status(200).json(jobsWithOwnerInfo);
     
   } catch (err) {
     console.error("Detailed error fetching user likes:", {

@@ -1,9 +1,11 @@
+// Like.js
 const mongoose = require('mongoose');
 
 const likeSchema = new mongoose.Schema({
-  likedBy: { type: String, required: true }, // Using String to match user ID type
-  likedType: { type: String, enum: ['job'], required: true },
-  likedItemId: { type: mongoose.Schema.Types.ObjectId, required: true, ref: 'Job' }, // Changed to ObjectId
+  likedBy: { type: String, required: true },
+  likedType: { type: String, enum: ['job', 'driver'], required: true },
+  likedItemId: { type: String, required: true }, // Changed to String to match user IDs
+  likedDate: { type: Date, default: Date.now }
 }, { 
   timestamps: true,
   indexes: [

@@ -5,7 +5,17 @@ const Like = require('../models/Like');
 // Define all controller functions first
 const createJob = async (req, res) => {
   try {
-    const job = await JobPost.create({ ...req.body, ownerId: req.userId });
+    // Ensure lorryPhotos is an array
+    const lorryPhotos = Array.isArray(req.body.lorryPhotos) 
+      ? req.body.lorryPhotos 
+      : req.body.lorryPhotos ? [req.body.lorryPhotos] : [];
+
+    const job = await JobPost.create({ 
+      ...req.body, 
+      lorryPhotos,
+      ownerId: req.userId 
+    });
+    
     res.status(201).json(job);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -35,50 +45,67 @@ const getJobsForDriver = async (req, res) => {
     const driverProfile = await DriverProfile.findOne({ userId: req.userId });
     const filters = {};
     
+    // Apply truck type filter
     if (req.query.truckType) {
       filters.truckType = req.query.truckType;
     } else if (driverProfile?.knownTruckTypes?.length > 0) {
       filters.truckType = { $in: driverProfile.knownTruckTypes };
     }
     
+    // Location filter
     if (req.query.location) {
-      filters.sourceLocation = { $regex: req.query.location, $options: 'i' };
+      filters.sourceLocation = { $regex: new RegExp(req.query.location, 'i') };
     }
     
+    // Salary range filter
     if (req.query.minSalary || req.query.maxSalary) {
-      filters['salaryRange.min'] = {};
-      filters['salaryRange.max'] = {};
+      filters.$and = [];
       
       if (req.query.minSalary) {
-        filters['salaryRange.min'] = { $gte: parseInt(req.query.minSalary) };
+        filters.$and.push({
+          $or: [
+            { 'salaryRange.min': { $gte: parseInt(req.query.minSalary) } },
+            { 'salaryRange.max': { $gte: parseInt(req.query.minSalary) } }
+          ]
+        });
       }
       
       if (req.query.maxSalary) {
-        filters['salaryRange.max'] = { $lte: parseInt(req.query.maxSalary) };
+        filters.$and.push({
+          $or: [
+            { 'salaryRange.min': { $lte: parseInt(req.query.maxSalary) } },
+            { 'salaryRange.max': { $lte: parseInt(req.query.maxSalary) } }
+          ]
+        });
       }
     }
     
+    // Variant type filter
     if (req.query.variantType) {
       filters['variant.type'] = req.query.variantType;
     }
     
+    // Wheels/feet filter
     if (req.query.wheelsOrFeet) {
       filters['variant.wheelsOrFeet'] = req.query.wheelsOrFeet;
     }
     
+    // Experience filter
     if (req.query.experienceRequired) {
       filters.experienceRequired = req.query.experienceRequired;
     }
     
+    // Duty type filter
     if (req.query.dutyType) {
       filters.dutyType = req.query.dutyType;
     }
     
+    // Salary type filter
     if (req.query.salaryType) {
       filters.salaryType = req.query.salaryType;
     }
     
-    console.log('Applied filters:', filters);
+    console.log('Final filters:', JSON.stringify(filters, null, 2));
     
     const jobs = await JobPost.find(filters)
       .sort({ createdAt: -1 })
@@ -87,7 +114,10 @@ const getJobsForDriver = async (req, res) => {
     res.status(200).json(jobs);
   } catch (err) {
     console.error('Error in getJobsForDriver:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      error: 'Failed to fetch jobs',
+      details: err.message 
+    });
   }
 };
 

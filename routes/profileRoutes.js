@@ -36,12 +36,21 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// ✅ Configure multer
+// ✅ Configure multer for single file uploads
 const upload = multer({ 
   storage,
   fileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
+
+// ✅ NEW: Configure multer for multiple file uploads (for driver profile)
+const uploadMultiple = multer({ 
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit per file
   }
 });
 
@@ -64,19 +73,32 @@ const handleMulterError = (err, req, res, next) => {
 // ✅ NEW: User info update route
 router.patch('/user', authMiddleware, profileController.updateUserInfo);
 
-// ✅ Driver Profile Routes
+// ✅ MODIFIED: Driver Profile Routes with multiple file upload support
 router.get('/driver', authMiddleware, profileController.getDriverProfile);
-router.post('/driver', authMiddleware, upload.single('photo'), handleMulterError, profileController.createDriverProfile);
-router.patch('/driver', authMiddleware, upload.single('photo'), handleMulterError, profileController.updateDriverProfile);
 
-// ✅ Owner Profile Routes
+// ✅ NEW: Driver profile creation with support for both license and profile photos
+router.post('/driver', authMiddleware, uploadMultiple.fields([
+  { name: 'licensePhoto', maxCount: 1 },
+  { name: 'profilePhoto', maxCount: 1 }
+]), handleMulterError, profileController.createDriverProfile);
+router.get('/driver/available', authMiddleware, profileController.getAvailableDrivers);
+
+// ✅ NEW: Driver profile update with support for both license and profile photos
+router.patch('/driver', authMiddleware, uploadMultiple.fields([
+  { name: 'licensePhoto', maxCount: 1 },
+  { name: 'profilePhoto', maxCount: 1 }
+]), handleMulterError, profileController.updateDriverProfile);
+// Add this route in profileRoutes.js
+router.patch('/availability', authMiddleware, profileController.updateAvailability);
+// ✅ Owner Profile Routes (unchanged)
 router.get('/owner', authMiddleware, profileController.getOwnerProfile);
 router.post('/owner', authMiddleware, upload.single('photo'), handleMulterError, profileController.createOwnerProfile);
 router.patch('/owner', authMiddleware, upload.single('photo'), handleMulterError, profileController.updateOwnerProfile);
 router.get('/owner/:ownerId', authMiddleware, profileController.getOwnerProfileById);
 router.get('/owner/:ownerId/jobs', authMiddleware, jobController.getJobsByOwnerId);
+router.get('/driver/check-completion', authMiddleware, profileController.checkProfileCompletion);
 
-// ✅ Delete profile photo route
+// ✅ Delete profile photo route (supports both license and profile photos)
 router.delete('/photo', authMiddleware, profileController.deleteProfilePhoto);
 
 // ✅ Test routes

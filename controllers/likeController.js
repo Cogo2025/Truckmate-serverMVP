@@ -1,7 +1,8 @@
 const Like = require('../models/Like');
 const JobPost = require('../models/JobPost');
 const OwnerProfile = require('../models/OwnerProfile');
-
+const DriverProfile = require('../models/DriverProfile');
+const User = require('../models/User');
 exports.likeItem = async (req, res) => {
   try {
     const { likedItemId } = req.body;
@@ -164,6 +165,144 @@ exports.checkUserLike = async (req, res) => {
     });
   } catch (err) {
     console.error("Error checking like:", err);
+    res.status(500).json({ 
+      error: "Server error",
+      details: err.message 
+    });
+  }
+};
+
+
+// Like a driver
+exports.likeDriver = async (req, res) => {
+  try {
+    const { driverId } = req.body;
+    
+    if (!driverId) {
+      return res.status(400).json({ error: "driverId is required" });
+    }
+
+    // Check if driver exists
+    const driver = await User.findOne({ googleId: driverId, role: 'driver' });
+    if (!driver) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+
+    // Check if already liked
+    const existingLike = await Like.findOne({
+      likedBy: req.userId,
+      likedItemId: driverId,
+      likedType: 'driver'
+    });
+
+    if (existingLike) {
+      return res.status(400).json({ error: "Driver already liked" });
+    }
+
+    // Create new like
+    const like = await Like.create({
+      likedBy: req.userId,
+      likedType: 'driver',
+      likedItemId: driverId
+    });
+
+    res.status(201).json(like);
+  } catch (err) {
+    console.error("Error liking driver:", err);
+    res.status(500).json({ 
+      error: "Server error",
+      details: err.message 
+    });
+  }
+};
+
+// Unlike a driver
+exports.unlikeDriver = async (req, res) => {
+  try {
+    const { driverId } = req.params;
+
+    const like = await Like.findOneAndDelete({
+      likedBy: req.userId,
+      likedItemId: driverId,
+      likedType: 'driver'
+    });
+
+    if (!like) {
+      return res.status(404).json({ error: "Like not found" });
+    }
+
+    res.status(200).json({ message: "Successfully unliked" });
+  } catch (err) {
+    console.error("Error unliking driver:", err);
+    res.status(500).json({ 
+      error: "Server error",
+      details: err.message 
+    });
+  }
+};
+
+// Get owner's liked drivers
+exports.getOwnerLikedDrivers = async (req, res) => {
+  try {
+    // Get all driver likes by current user
+    const likes = await Like.find({ 
+      likedBy: req.userId,
+      likedType: 'driver'
+    }).sort({ createdAt: -1 }).lean().exec();
+    
+    if (!likes || likes.length === 0) {
+      return res.status(200).json([]);
+    }
+
+    // Get driver details for each liked driver
+    const driverIds = likes.map(like => like.likedItemId);
+    
+    // First get the users
+    const users = await User.find({ googleId: { $in: driverIds } }).lean().exec();
+    
+    // Then get driver profiles for each user
+    const driversWithProfile = await Promise.all(
+      users.map(async (user) => {
+        const profile = await DriverProfile.findOne({ userId: user.googleId }).lean().exec();
+        return {
+          ...user,
+          profile,
+          likedDate: likes.find(l => l.likedItemId === user.googleId)?.createdAt
+        };
+      })
+    );
+
+    res.status(200).json(driversWithProfile);
+  } catch (err) {
+    console.error("Error fetching liked drivers:", err);
+    res.status(500).json({ 
+      error: "Server error",
+      details: err.message 
+    });
+  }
+};
+
+// Check if owner has liked a specific driver
+exports.checkDriverLike = async (req, res) => {
+  try {
+    const { driverId } = req.query;
+
+    if (!driverId) {
+      return res.status(400).json({ error: "driverId is required" });
+    }
+
+    const like = await Like.findOne({
+      likedBy: req.userId,
+      likedItemId: driverId,
+      likedType: 'driver'
+    });
+
+    res.status(200).json({
+      isLiked: !!like,
+      likeId: like?._id
+    });
+  } catch (err) {
+    console.error("Error checking driver like:", err);
     res.status(500).json({ 
       error: "Server error",
       details: err.message 

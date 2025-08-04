@@ -1,10 +1,28 @@
 const mongoose = require('mongoose');
 
 const jobSchema = new mongoose.Schema({
-  truckType: String,
+  truckType: { 
+    type: String,
+    enum: [
+      "Body Vehicle", "Trailer", "Tipper", "Gas Tanker",
+      "Wind Mill", "Concrete Mixer", "Petrol Tank",
+      "Container", "Bulker"
+    ]
+  },
   variant: {
     type: { type: String },
-    wheelsOrFeet: String
+    wheelsOrFeet: {
+      type: String,
+      validate: {
+        validator: function(value) {
+          if (this.truckType === "Body Vehicle") {
+            return ["6 wheels", "8 wheels", "12 wheels", "14 wheels", "16 wheels"].includes(value);
+          }
+          return true; // No validation for other truck types
+        },
+        message: props => `Invalid wheels type for Body Vehicle`
+      }
+    }
   },
   sourceLocation: String,
   experienceRequired: String,

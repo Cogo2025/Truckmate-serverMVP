@@ -3,6 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const connectDB = require('./config/db');
 const path = require('path');
+const adminRoutes = require('./routes/adminRoutes');
 
 dotenv.config();
 connectDB();
@@ -42,5 +43,6 @@ app.use('/api/jobs', require('./routes/jobRoutes'));
 app.use('/api/likes', require('./routes/likeRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/uploads', require('./routes/uploadRoutes')); // Make sure this is added
+app.use('/api/admin', adminRoutes);
 
 module.exports = app;

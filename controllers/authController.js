@@ -44,7 +44,7 @@ exports.googleLogin = async (req, res) => {
 
       // 5. Create empty profile based on role
       if (role === 'driver') {
-        await DriverProfile.create({ 
+        await DriverProfile.create({
           userId: user._id,
           // Set default values
           knownTruckTypes: [],
@@ -52,28 +52,35 @@ exports.googleLogin = async (req, res) => {
           licensePhoto: ''
         });
       } else if (role === 'owner') {
-       await OwnerProfile.create({
-  userId: user._id,
-  companyName: 'unknown',
-  companyLocation: 'unknown',
-  gender: 'Not Specified', // ✅ Matches enum
-  photoUrl: '',
-  companyInfoCompleted: false
-});
-
-
+        await OwnerProfile.create({
+          userId: user._id,
+          companyName: 'unknown',
+          companyLocation: 'unknown',
+          gender: 'Not Specified', // ✅ Matches enum
+          photoUrl: '',
+          companyInfoCompleted: false
+        });
       }
     }
 
     // 6. Generate JWT token for authentication
-    const token = jwt.sign({ 
+    const token = jwt.sign({
       userId: user._id,
       role: user.role // Include role in the token
     }, process.env.JWT_SECRET, { expiresIn: '3d' });
 
-    // 7. Return success response
-    res.status(200).json({ 
-      token, 
+    // 7. Get profile completion status
+    let profileCompleted = false;
+    if (user.role === 'driver') {
+      profileCompleted = await DriverProfile.exists({ userId: user._id });
+    } else if (user.role === 'owner') {
+      const ownerProfile = await OwnerProfile.findOne({ userId: user._id }).select('companyInfoCompleted');
+      profileCompleted = ownerProfile ? ownerProfile.companyInfoCompleted : false;
+    }
+
+    // 8. Return success response
+    res.status(200).json({
+      token,
       user: {
         _id: user._id,
         googleId: user.googleId,
@@ -82,18 +89,15 @@ exports.googleLogin = async (req, res) => {
         phone: user.phone,
         email: user.email,
         photoUrl: user.photoUrl,
-        // Include profile completion status
-        profileCompleted: user.role === 'driver' ? 
-          await DriverProfile.exists({ userId: user._id }) :
-          await OwnerProfile.findOne({ userId: user._id }).select('companyInfoCompleted')
+        profileCompleted: profileCompleted
       }
     });
 
   } catch (error) {
     console.error("Google Login Error:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Authentication failed',
-      details: error.message 
+      details: error.message
     });
   }
 };

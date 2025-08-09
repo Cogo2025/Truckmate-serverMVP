@@ -44,5 +44,8 @@ app.use('/api/likes', require('./routes/likeRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/uploads', require('./routes/uploadRoutes')); // Make sure this is added
 app.use('/api/admin', adminRoutes);
+const verificationRoutes = require('./routes/verificationRoutes'); // ✅ Import happens AFTER usage
+app.use('/api/verification', require('./routes/verificationRoutes'));
+
 
 module.exports = app;

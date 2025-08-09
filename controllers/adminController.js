@@ -417,6 +417,26 @@ const getAllOwners = async (req, res) => {
     });
   }
 };
+
+
+const getVerificationStats = async (req, res) => {
+  try {
+    const VerificationRequest = require('../models/VerificationRequest');
+    
+    const [pending, approved, rejected] = await Promise.all([
+      VerificationRequest.countDocuments({ status: 'pending' }),
+      VerificationRequest.countDocuments({ status: 'approved' }),
+      VerificationRequest.countDocuments({ status: 'rejected' })
+    ]);
+
+    res.status(200).json({
+      success: true,
+      verificationStats: { pending, approved, rejected }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 module.exports = {
   initialLogin,
   adminLogin,
@@ -424,5 +444,6 @@ module.exports = {
   createNewAdmin,
   getDashboardData,
   getAllDrivers,
-  getAllOwners
+  getAllOwners,
+  getVerificationStats
 };

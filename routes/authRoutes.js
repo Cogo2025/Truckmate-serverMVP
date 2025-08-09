@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const { googleLogin } = require('../controllers/authController');
-const { authMiddleware } = require('../middleware/authMiddleware'); // Destructured import
+const { authMiddleware } = require('../middleware/authMiddleware');
 const User = require('../models/User');
 
 // 🔐 Login with Google
@@ -15,9 +15,9 @@ router.get('/me', authMiddleware, async (req, res) => {
     const user = await User.findOne({ googleId: req.userId });
     
     if (!user) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'User not found',
-        message: 'No user exists with this Google ID' 
+        message: 'No user exists with this Google ID'
       });
     }
 
@@ -38,9 +38,9 @@ router.get('/me', authMiddleware, async (req, res) => {
 
   } catch (err) {
     console.error("Failed to fetch user info:", err);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Server error',
-      details: err.message 
+      details: err.message
     });
   }
 });

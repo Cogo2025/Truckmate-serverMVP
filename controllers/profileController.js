@@ -7,7 +7,7 @@ const fs = require('fs');
 
 // ✅ Helper function to generate proper photo URLs
 const generatePhotoUrl = (filename) => {
-  const baseUrl = process.env.BASE_URL || 'http://192.168.29.138:5000'; // Use your IP
+  const baseUrl = process.env.BASE_URL || 'http://192.168.255.244:5000'; // Use your IP
   return `${baseUrl}/uploads/${filename}`;
 };
 

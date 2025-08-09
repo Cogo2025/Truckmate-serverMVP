@@ -13,5 +13,5 @@ router.post('/create-admin', adminAuth, adminController.createNewAdmin);
 router.get('/dashboard', adminAuth, adminController.getDashboardData);
 router.get('/drivers', adminAuth, adminController.getAllDrivers);
 router.get('/owners', adminAuth, adminController.getAllOwners);
-
+router.get('/verification-stats', adminAuth, adminController.getVerificationStats);
 module.exports = router;

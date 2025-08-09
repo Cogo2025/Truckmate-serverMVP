@@ -1,15 +1,5 @@
-const admin = require('firebase-admin');
+const admin = require('../config/firebase'); // Use the centralized config
 const User = require('../models/User');
-
-const serviceAccount = require('../config/firebaseServiceAccountKey.json');
-
-// Initialize Firebase Admin SDK if not already initialized
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: `https://${serviceAccount.project_id}.firebaseio.com`
-  });
-}
 
 const authMiddleware = async (req, res, next) => {
   // Extract token from Authorization header
@@ -17,9 +7,9 @@ const authMiddleware = async (req, res, next) => {
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     console.warn('❌ No token provided or malformed Authorization header');
-    return res.status(401).json({ 
+    return res.status(401).json({
       error: 'Unauthorized',
-      message: 'No authentication token provided or malformed header' 
+      message: 'No authentication token provided or malformed header'
     });
   }
 
@@ -31,21 +21,21 @@ const authMiddleware = async (req, res, next) => {
     
     if (!decodedToken.uid) {
       console.warn('🔥 Invalid token payload - missing UID');
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: 'Forbidden',
-        message: 'Invalid token payload' 
+        message: 'Invalid token payload'
       });
     }
 
     const { uid, name, email, phone_number, picture } = decodedToken;
     console.log(`✅ Authenticated user with UID: ${uid}`);
-
+    
     // Set UID in request for downstream use
     req.userId = uid;
 
     // Find or create user in database
     let user = await User.findOne({ googleId: uid }).lean();
-
+    
     if (!user) {
       console.log(`🆕 Creating new user record for UID: ${uid}`);
       user = await User.create({
@@ -65,35 +55,36 @@ const authMiddleware = async (req, res, next) => {
     // Role-based access control check
     if (req.requiredRole && user.role !== req.requiredRole) {
       console.warn(`🚫 Role mismatch - Required: ${req.requiredRole}, Actual: ${user.role}`);
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: 'Forbidden',
-        message: 'Insufficient permissions' 
+        message: 'Insufficient permissions'
       });
     }
 
     next();
+
   } catch (error) {
     console.error('🔐 Authentication error:', error.message);
-
+    
     // Handle specific Firebase errors
     if (error.code === 'auth/id-token-expired') {
-      return res.status(401).json({ 
+      return res.status(401).json({
         error: 'Token expired',
-        message: 'Your session has expired. Please log in again.' 
+        message: 'Your session has expired. Please log in again.'
       });
     }
 
     if (error.code === 'auth/argument-error') {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Invalid token',
-        message: 'Malformed authentication token' 
+        message: 'Malformed authentication token'
       });
     }
 
     // Generic error response
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: 'Authentication failed',
-      message: 'Could not authenticate user' 
+      message: 'Could not authenticate user'
     });
   }
 };

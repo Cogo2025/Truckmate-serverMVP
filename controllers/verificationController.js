@@ -161,9 +161,19 @@ const getVerificationStats = async (req, res) => {
 // Add this method to your verificationController.js
 const getAllVerifications = async (req, res) => {
   try {
+    console.log('📥 Fetching all verifications...');
+    
+    // First check if we have any verification requests
+    const requestCount = await VerificationRequest.countDocuments();
+    console.log(`Found ${requestCount} total verification requests`);
+    
+    if (requestCount === 0) {
+      return res.status(200).json([]);
+    }
+
     const requests = await VerificationRequest.aggregate([
       // Match all requests (no filter)
-      { 
+      {
         $lookup: {
           from: 'users',
           localField: 'driverId',
@@ -179,8 +189,18 @@ const getAllVerifications = async (req, res) => {
           as: 'profile'
         }
       },
-      { $unwind: '$driver' },
-      { $unwind: '$profile' },
+      {
+        $unwind: {
+          path: '$driver',
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      {
+        $unwind: {
+          path: '$profile',
+          preserveNullAndEmptyArrays: true
+        }
+      },
       {
         $project: {
           _id: 1,
@@ -191,23 +211,28 @@ const getAllVerifications = async (req, res) => {
           processedAt: 1,
           processedBy: 1,
           notes: 1,
-          'driver.name': 1,
-          'driver.email': 1,
-          'driver.phone': 1,
-          'profile.licenseNumber': 1,
-          'profile.licenseType': 1,
+          'driver.name': { $ifNull: ['$driver.name', 'Unknown Driver'] },
+          'driver.email': { $ifNull: ['$driver.email', 'N/A'] },
+          'driver.phone': { $ifNull: ['$driver.phone', 'N/A'] },
+          'profile.licenseNumber': { $ifNull: ['$profile.licenseNumber', 'N/A'] },
+          'profile.licenseType': { $ifNull: ['$profile.licenseType', 'N/A'] },
           'profile.licenseExpiryDate': 1,
-          'profile.experience': 1,
-          'profile.location': 1,
+          'profile.experience': { $ifNull: ['$profile.experience', 'N/A'] },
+          'profile.location': { $ifNull: ['$profile.location', 'N/A'] },
           documents: 1
         }
       },
       { $sort: { createdAt: -1 } }
     ]);
 
+    console.log(`✅ Successfully fetched ${requests.length} verification requests`);
     res.status(200).json(requests);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('❌ Error fetching all verifications:', err);
+    res.status(500).json({ 
+      error: 'Failed to fetch verification history',
+      details: err.message 
+    });
   }
 };
 

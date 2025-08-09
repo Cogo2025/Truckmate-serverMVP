@@ -4,6 +4,7 @@ const DriverProfile = require('../models/DriverProfile');
 const OwnerProfile = require('../models/OwnerProfile');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const VerificationRequest = require('../models/VerificationRequest'); // ✅ ADD THIS LINE
 
 // Generate JWT token
 const generateToken = (adminId) => {
@@ -213,77 +214,85 @@ const createNewAdmin = async (req, res) => {
   }
 };
 
-// Get dashboard data
 const getDashboardData = async (req, res) => {
   try {
     // Recent users (last 7 days)
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    // Get user counts
-    const totalUsers = await User.countDocuments();
-    const totalDrivers = await User.countDocuments({ role: 'driver' });
-    const totalOwners = await User.countDocuments({ role: 'owner' });
-    const activeDrivers = await User.countDocuments({ 
-      role: 'driver', 
-      isAvailable: true 
-    });
-
-    // Get recent users with profiles
-    const recentUsers = await User.aggregate([
-  { $match: { createdAt: { $gte: sevenDaysAgo } } },
-  {
-    $lookup: {
-      from: 'driverprofiles',
-      localField: 'googleId',
-      foreignField: 'userId',
-      as: 'driverProfile'
-    }
-  },
-  {
-    $lookup: {
-      from: 'ownerprofiles',
-      localField: 'googleId',
-      foreignField: 'userId',
-      as: 'ownerProfile'
-    }
-  },
-  {
-    $addFields: {
-      profile: {
-        $cond: {
-          if: { $eq: ['$role', 'driver'] },
-          then: { $arrayElemAt: ['$driverProfile', 0] },
-          else: { $arrayElemAt: ['$ownerProfile', 0] }
-        },
-      },
-      photoUrl: {
-        $cond: {
-          if: { $eq: ['$role', 'driver'] },
-          then: { $arrayElemAt: ['$driverProfile.profilePhoto', 0] },
-          else: { $arrayElemAt: ['$ownerProfile.photoUrl', 0] }
+    // Get verification stats
+    const verificationStats = await VerificationRequest.aggregate([
+      {
+        $group: {
+          _id: null,
+          pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
+          approved: { $sum: { $cond: [{ $eq: ["$status", "approved"] }, 1, 0] } },
+          rejected: { $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } }
         }
       }
-    }
-  },
-  { $unset: ['driverProfile', 'ownerProfile'] },
-  { $sort: { createdAt: -1 } },
-  { $limit: 10 },
-  {
-    $project: {
-      _id: 0,
-      id: '$googleId',
-      name: 1,
-      email: 1,
-      phone: 1,
-      photoUrl: 1, // This will now correctly show profile photo for both roles
-      role: 1,
-      isAvailable: 1,
-      createdAt: 1,
-      profile: 1
-    }
-  }
-]);
+    ]);
+
+    // Get user counts
+    const [totalUsers, totalDrivers, totalOwners, activeDrivers, recentUsers] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ role: 'driver' }),
+      User.countDocuments({ role: 'owner' }),
+      User.countDocuments({ role: 'driver', isAvailable: true }),
+      User.aggregate([
+        { $match: { createdAt: { $gte: sevenDaysAgo } } },
+        {
+          $lookup: {
+            from: 'driverprofiles',
+            localField: 'googleId',
+            foreignField: 'userId',
+            as: 'driverProfile'
+          }
+        },
+        {
+          $lookup: {
+            from: 'ownerprofiles',
+            localField: 'googleId',
+            foreignField: 'userId',
+            as: 'ownerProfile'
+          }
+        },
+        {
+          $addFields: {
+            profile: {
+              $cond: {
+                if: { $eq: ['$role', 'driver'] },
+                then: { $arrayElemAt: ['$driverProfile', 0] },
+                else: { $arrayElemAt: ['$ownerProfile', 0] }
+              },
+            },
+            photoUrl: {
+              $cond: {
+                if: { $eq: ['$role', 'driver'] },
+                then: { $arrayElemAt: ['$driverProfile.profilePhoto', 0] },
+                else: { $arrayElemAt: ['$ownerProfile.photoUrl', 0] }
+              }
+            }
+          }
+        },
+        { $unset: ['driverProfile', 'ownerProfile'] },
+        { $sort: { createdAt: -1 } },
+        { $limit: 10 },
+        {
+          $project: {
+            _id: 0,
+            id: '$googleId',
+            name: 1,
+            email: 1,
+            phone: 1,
+            photoUrl: 1,
+            role: 1,
+            isAvailable: 1,
+            createdAt: 1,
+            profile: 1
+          }
+        }
+      ])
+    ]);
 
     res.status(200).json({
       success: true,
@@ -294,7 +303,8 @@ const getDashboardData = async (req, res) => {
           totalOwners,
           activeDrivers
         },
-        recentUsers
+        recentUsers,
+        verificationStats: verificationStats[0] || { pending: 0, approved: 0, rejected: 0 }
       }
     });
   } catch (err) {

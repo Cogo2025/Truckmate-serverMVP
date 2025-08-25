@@ -1,9 +1,10 @@
-const mongoose = require('mongoose');
 
+const mongoose = require('mongoose');
 const driverProfileSchema = new mongoose.Schema({
   userId: { type: String, required: true, unique: true },
   profilePhoto: String, // Cloudinary URL
-  licensePhoto: String, // Cloudinary URL
+  licensePhotoFront: String, // NEW: Front license photo URL
+  licensePhotoBack: String,  // NEW: Back license photo URL
   licenseNumber: String,
   licenseExpiryDate: Date,
   knownTruckTypes: [String],
@@ -23,5 +24,6 @@ const driverProfileSchema = new mongoose.Schema({
   rejectionReason: String,
   resubmissionCount: { type: Number, default: 0 }
 }, { timestamps: true });
+
 
 module.exports = mongoose.model('DriverProfile', driverProfileSchema);

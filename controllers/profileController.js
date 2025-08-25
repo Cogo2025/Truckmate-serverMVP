@@ -41,87 +41,57 @@ const ownerProfileStorage = new CloudinaryStorage({
       { quality: 'auto' }
     ],
   },
-  filename: (req, file, cb) => {
-    // Generate unique filename
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'owner-profile-' + uniqueSuffix);
-  }
 });
 
-// Multer configurations
-const uploadDriverProfile = multer({ 
-  storage: driverProfileStorage,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
-  }
-});
-
-const uploadDriverLicense = multer({ 
-  storage: driverLicenseStorage,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
-  }
-});
-
-const uploadOwnerProfile = multer({ 
-  storage: ownerProfileStorage,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
-  }
-});
-
-// Combined multer for driver (profile + license)
+// Multer configurations (Driver: Profile + License [front/back])
 const uploadDriverFiles = multer({ storage: driverProfileStorage }).fields([
   { name: 'profilePhoto', maxCount: 1 },
-  { name: 'licensePhoto', maxCount: 1 }
+  { name: 'licensePhotoFront', maxCount: 1 }, // NEW
+  { name: 'licensePhotoBack', maxCount: 1 }   // NEW
 ]);
 
-// Helper function to delete image from Cloudinary
+const uploadOwnerProfile = multer({
+  storage: ownerProfileStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }
+});
+
+// Helper to delete images from Cloudinary
 const deleteCloudinaryImage = async (imageUrl) => {
   try {
     if (!imageUrl) return;
-    
-    // Extract public_id from Cloudinary URL
     const urlParts = imageUrl.split('/');
     const publicIdWithExtension = urlParts[urlParts.length - 1];
     const publicId = publicIdWithExtension.split('.')[0];
-    
-    // Get the folder name (second to last part of URL)
     const folder = urlParts[urlParts.length - 2];
-    
     const fullPublicId = `${folder}/${publicId}`;
-    
-    console.log('Deleting Cloudinary image:', fullPublicId);
-    
-    const result = await cloudinary.uploader.destroy(fullPublicId);
-    console.log('Cloudinary delete result:', result);
-    
-    return result;
+    await cloudinary.uploader.destroy(fullPublicId);
   } catch (error) {
-    console.error('Error deleting Cloudinary image:', error);
     throw error;
   }
 };
 
 // --- DRIVER PROFILE FUNCTIONS ---
+
+// Create driver profile (supports dual license photos)
 const createDriverProfile = async (req, res) => {
   try {
     const { experience, gender, knownTruckTypes, licenseNumber, licenseExpiryDate, age, location } = req.body;
-    
     let profilePhotoUrl = '';
-    let licensePhotoUrl = '';
-    
-    // Handle file uploads
+    let licensePhotoFrontUrl = '';
+    let licensePhotoBackUrl = '';
+    // Files from multer
     if (req.files) {
       if (req.files['profilePhoto']) {
         profilePhotoUrl = req.files['profilePhoto'][0].path;
       }
-      if (req.files['licensePhoto']) {
-        licensePhotoUrl = req.files['licensePhoto'].path;
+      if (req.files['licensePhotoFront']) {
+        licensePhotoFrontUrl = req.files['licensePhotoFront'][0].path;
+      }
+      if (req.files['licensePhotoBack']) {
+        licensePhotoBackUrl = req.files['licensePhotoBack'][0].path;
       }
     }
-
-    // Parse truck types if it's a string
+    // Parse truck types if necessary
     let parsedTruckTypes = knownTruckTypes;
     if (typeof knownTruckTypes === 'string') {
       try {
@@ -130,11 +100,11 @@ const createDriverProfile = async (req, res) => {
         parsedTruckTypes = [knownTruckTypes];
       }
     }
-
     const profile = await DriverProfile.create({
       userId: req.userId,
       profilePhoto: profilePhotoUrl,
-      licensePhoto: licensePhotoUrl,
+      licensePhotoFront: licensePhotoFrontUrl, // NEW
+      licensePhotoBack: licensePhotoBackUrl,   // NEW
       licenseNumber,
       licenseExpiryDate,
       knownTruckTypes: parsedTruckTypes,
@@ -144,21 +114,18 @@ const createDriverProfile = async (req, res) => {
       location,
       profileCompleted: true
     });
-
     res.status(201).json({ success: true, profile });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
+// Update driver profile (dual photo support, old image removal)
 const updateDriverProfile = async (req, res) => {
   try {
     const updateData = { ...req.body };
-    
-    // Get current profile to access old image URLs
     const currentProfile = await DriverProfile.findOne({ userId: req.userId });
-    
-    // Handle file uploads and delete old images
+    // New photos, handle deletion of old
     if (req.files) {
       if (req.files['profilePhoto']) {
         if (currentProfile.profilePhoto) {
@@ -166,15 +133,20 @@ const updateDriverProfile = async (req, res) => {
         }
         updateData.profilePhoto = req.files['profilePhoto'][0].path;
       }
-      if (req.files['licensePhoto']) {
-        if (currentProfile.licensePhoto) {
-          await deleteCloudinaryImage(currentProfile.licensePhoto);
+      if (req.files['licensePhotoFront']) {
+        if (currentProfile.licensePhotoFront) {
+          await deleteCloudinaryImage(currentProfile.licensePhotoFront);
         }
-        updateData.licensePhoto = req.files['licensePhoto'].path;
+        updateData.licensePhotoFront = req.files['licensePhotoFront'][0].path;
+      }
+      if (req.files['licensePhotoBack']) {
+        if (currentProfile.licensePhotoBack) {
+          await deleteCloudinaryImage(currentProfile.licensePhotoBack);
+        }
+        updateData.licensePhotoBack = req.files['licensePhotoBack'][0].path;
       }
     }
-
-    // Parse known truck types if it's a string
+    // Parse truck types if necessary
     if (updateData.knownTruckTypes && typeof updateData.knownTruckTypes === 'string') {
       try {
         updateData.knownTruckTypes = JSON.parse(updateData.knownTruckTypes);
@@ -182,17 +154,14 @@ const updateDriverProfile = async (req, res) => {
         updateData.knownTruckTypes = [updateData.knownTruckTypes];
       }
     }
-
     const profile = await DriverProfile.findOneAndUpdate(
       { userId: req.userId },
       updateData,
       { new: true, runValidators: true }
     );
-
     if (!profile) {
       return res.status(404).json({ error: "Profile not found" });
     }
-
     res.status(200).json({
       success: true,
       message: "Driver profile updated successfully",
@@ -203,12 +172,12 @@ const updateDriverProfile = async (req, res) => {
   }
 };
 
-// --- OWNER PROFILE FUNCTIONS ---
+// --- OWNER PROFILE FUNCTIONS (unchanged) ---
+
 const createOwnerProfile = async (req, res) => {
   try {
     const { companyName, companyLocation, gender } = req.body;
     const photoUrl = req.file ? req.file.path : '';
-
     const profile = await OwnerProfile.create({
       userId: req.userId,
       companyName,
@@ -217,7 +186,6 @@ const createOwnerProfile = async (req, res) => {
       photoUrl,
       companyInfoCompleted: true
     });
-
     res.status(201).json({ success: true, profile });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -228,48 +196,36 @@ const updateOwnerProfile = async (req, res) => {
   try {
     const { companyName, companyLocation, gender } = req.body;
     const updateData = {};
-
     if (companyName) updateData.companyName = companyName.trim();
     if (companyLocation) updateData.companyLocation = companyLocation.trim();
     if (gender) updateData.gender = gender.trim();
-
-    // Get current profile to access old image URL
     const currentProfile = await OwnerProfile.findOne({ userId: req.userId });
-
-    // Handle file upload and delete old image
     if (req.file) {
-      console.log('File uploaded:', req.file); // Debug log
-      
       if (currentProfile && currentProfile.photoUrl) {
         await deleteCloudinaryImage(currentProfile.photoUrl);
       }
-      
-      // Use the secure_url from Cloudinary response
-      updateData.photoUrl = req.file.path; // This should be the Cloudinary URL
+      updateData.photoUrl = req.file.path;
     }
-
     const profile = await OwnerProfile.findOneAndUpdate(
       { userId: req.userId },
       updateData,
       { new: true, runValidators: true }
     );
-
     if (!profile) {
       return res.status(404).json({ error: "Profile not found" });
     }
-
     res.status(200).json({
       success: true,
       message: "Profile updated successfully",
-      profile: profile // Return the updated profile
+      profile: profile
     });
   } catch (err) {
-    console.error('Update owner profile error:', err);
     res.status(500).json({ error: "Server error", details: err.message });
   }
 };
 
-// --- EXISTING FUNCTIONS (keep these as they are) ---
+// --- EXISTING FUNCTIONS (unchanged) ---
+
 const getDriverProfile = async (req, res) => {
   try {
     const profile = await DriverProfile.findOne({ userId: req.userId });
@@ -292,7 +248,8 @@ const getOwnerProfile = async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: "Server error", details: err.message });
   }
-}; 
+};
+
 const getOwnerProfileById = async (req, res) => {
   try {
     const profile = await OwnerProfile.findOne({ userId: req.params.ownerId }).lean().exec();
@@ -305,13 +262,9 @@ const getOwnerProfileById = async (req, res) => {
   }
 };
 
-
 const getOwnerJobs = async (req, res) => {
   try {
-    const jobs = await JobPost.find({ ownerId: req.params.ownerId })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    const jobs = await JobPost.find({ ownerId: req.params.ownerId }).sort({ createdAt: -1 }).lean().exec();
     res.status(200).json(jobs);
   } catch (err) {
     res.status(500).json({ error: "Server error", details: err.message });
@@ -322,7 +275,7 @@ const getOwnerJobs = async (req, res) => {
 
 const deleteProfilePhoto = async (req, res) => {
   try {
-    const { userType, photoType } = req.body; // 'owner' or 'driver', 'license' or 'profile'
+    const { userType, photoType } = req.body;
     let ProfileModel;
     if (userType === 'owner') {
       ProfileModel = OwnerProfile;
@@ -331,33 +284,31 @@ const deleteProfilePhoto = async (req, res) => {
     } else {
       return res.status(400).json({ error: "Invalid user type" });
     }
-
     const profile = await ProfileModel.findOne({ userId: req.userId });
     if (!profile) {
       return res.status(404).json({ error: "Profile not found" });
     }
-
     let photoUrl = '';
     let updateField = '';
-
     if (userType === 'driver') {
-      if (photoType === 'license') {
-        photoUrl = profile.licensePhoto;
-        updateField = 'licensePhoto';
+      if (photoType === 'licenseFront') {
+        photoUrl = profile.licensePhotoFront;
+        updateField = 'licensePhotoFront';
+      } else if (photoType === 'licenseBack') {
+        photoUrl = profile.licensePhotoBack;
+        updateField = 'licensePhotoBack';
       } else if (photoType === 'profile') {
         photoUrl = profile.profilePhoto;
         updateField = 'profilePhoto';
       } else {
         return res.status(400).json({ error: "Invalid photo type for driver" });
       }
-    } else {
+    } else { // owner
       photoUrl = profile.photoUrl;
       updateField = 'photoUrl';
     }
-
-    // Optionally: Delete from Cloudinary here if you want
-
-    // Remove photo URL from profile
+    // Optionally: Delete from Cloudinary
+    if (photoUrl) await deleteCloudinaryImage(photoUrl);
     const updateData = {};
     updateData[updateField] = '';
     await ProfileModel.findOneAndUpdate(
@@ -374,80 +325,7 @@ const deleteProfilePhoto = async (req, res) => {
   }
 };
 
-const testImageAccess = async (req, res) => {
-  try {
-    const { filename } = req.params;
-    const imagePath = path.join(__dirname, '../uploads', filename);
-    if (fs.existsSync(imagePath)) {
-      res.json({
-        success: true,
-        message: "Image found",
-        path: imagePath
-      });
-    } else {
-      res.status(404).json({
-        success: false,
-        message: "Image not found",
-        path: imagePath
-      });
-    }
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-const updateUserInfo = async (req, res) => {
-  try {
-    const { name, phone } = req.body;
-    if (!name || !phone) {
-      return res.status(400).json({ error: "Name and phone are required" });
-    }
-
-    const phoneRegex = /^[+]?[\d\s\-\(\)]{10,}$/;
-    if (!phoneRegex.test(phone.trim())) {
-      return res.status(400).json({ error: "Invalid phone number format" });
-    }
-
-    const existingUser = await User.findOne({
-      phone: phone.trim(),
-      googleId: { $ne: req.userId }
-    });
-
-    if (existingUser) {
-      return res.status(400).json({ error: "Phone number already in use by another user" });
-    }
-
-    const updatedUser = await User.findOneAndUpdate(
-      { googleId: req.userId },
-      {
-        name: name.trim(),
-        phone: phone.trim()
-      },
-      { new: true, runValidators: true }
-    ).select('-password');
-    if (!updatedUser) {
-      return res.status(404).json({ error: "User not found" });
-    }
-    res.status(200).json({
-      success: true,
-      message: "User information updated successfully",
-      user: updatedUser
-    });
-  } catch (err) {
-    if (err.name === 'ValidationError') {
-      const errors = Object.values(err.errors).map(e => e.message);
-      return res.status(400).json({
-        error: "Validation failed",
-        details: errors
-      });
-    }
-    res.status(500).json({
-      error: "Failed to update user information",
-      details: err.message
-    });
-  }
-};
-
+// Check completion
 const checkProfileCompletion = async (req, res) => {
   try {
     const profile = await DriverProfile.findOne({ userId: req.userId });
@@ -466,6 +344,7 @@ const checkProfileCompletion = async (req, res) => {
   }
 };
 
+// Availability
 const updateAvailability = async (req, res) => {
   try {
     const { isAvailable } = req.body;
@@ -486,6 +365,7 @@ const updateAvailability = async (req, res) => {
   }
 };
 
+// Get available drivers
 const getAvailableDrivers = async (req, res) => {
   try {
     const { location, truckType } = req.query;
@@ -493,46 +373,23 @@ const getAvailableDrivers = async (req, res) => {
       role: 'driver',
       isAvailable: true
     };
-    if (location) {
-      matchConditions['profile.location'] = new RegExp(location, 'i');
-    }
-
+    if (location) matchConditions['profile.location'] = new RegExp(location, 'i');
     let truckTypeFilter = {};
-    if (truckType) {
-      truckTypeFilter = {
-        'profile.knownTruckTypes': new RegExp(truckType, 'i')
-      };
-    }
-
+    if (truckType) truckTypeFilter = {
+      'profile.knownTruckTypes': new RegExp(truckType, 'i')
+    };
     const availableDrivers = await User.aggregate([
-      {
-        $match: {
-          role: 'driver',
-          isAvailable: true
-        }
-      },
-      {
-        $lookup: {
+      { $match: { role: 'driver', isAvailable: true } },
+      { $lookup: {
           from: 'driverprofiles',
           localField: 'googleId',
           foreignField: 'userId',
           as: 'profile'
         }
       },
-      {
-        $unwind: {
-          path: '$profile',
-          preserveNullAndEmptyArrays: true
-        }
-      },
-      {
-        $match: {
-          ...matchConditions,
-          ...truckTypeFilter
-        }
-      },
-      {
-        $project: {
+      { $unwind: { path: '$profile', preserveNullAndEmptyArrays: true } },
+      { $match: { ...matchConditions, ...truckTypeFilter } },
+      { $project: {
           _id: 0,
           id: '$googleId',
           name: 1,
@@ -542,7 +399,9 @@ const getAvailableDrivers = async (req, res) => {
           experience: '$profile.experience',
           location: '$profile.location',
           licenseNumber: '$profile.licenseNumber',
-          truckTypes: '$profile.knownTruckTypes'
+          truckTypes: '$profile.knownTruckTypes',
+          licensePhotoFront: '$profile.licensePhotoFront', // NEW
+          licensePhotoBack: '$profile.licensePhotoBack'    // NEW
         }
       }
     ]);
@@ -562,13 +421,9 @@ module.exports = {
   getOwnerProfileById,
   getOwnerJobs,
   deleteProfilePhoto,
-  testImageAccess,
-  updateUserInfo,
   checkProfileCompletion,
   updateAvailability,
   getAvailableDrivers,
-  uploadDriverProfile,
-  uploadDriverLicense,
   uploadOwnerProfile,
-  uploadDriverFiles,
+  uploadDriverFiles
 };

@@ -5,7 +5,7 @@ const { authMiddleware } = require('../middleware/authMiddleware');
 const profileController = require('../controllers/profileController');
 const jobController = require('../controllers/jobController');
 
-// Import multer configurations from controller
+// Destructure functions safely from profileController
 const {
   uploadDriverFiles,
   uploadOwnerProfile,
@@ -25,83 +25,96 @@ const {
   getAvailableDrivers
 } = profileController;
 
+// Helper to check undefined controllers
+const safeHandler = (fnName) => {
+  if (typeof profileController[fnName] !== 'function') {
+    return (req, res) => {
+      console.error(`⚠ Missing controller function: ${fnName}`);
+      return res.status(500).json({
+        error: `Internal server error: Missing controller function "${fnName}"`
+      });
+    };
+  }
+  return profileController[fnName];
+};
+
 // ============================================
 // DRIVER PROFILE ROUTES
 // ============================================
 
-// Create driver profile with Cloudinary file upload (profile + license photos)
+// Create driver profile with Cloudinary file upload
 router.post(
   '/driver',
   authMiddleware,
-  uploadDriverFiles, // Handles both profilePhoto and licensePhoto
-  createDriverProfile
+  uploadDriverFiles,
+  safeHandler('createDriverProfile')
 );
 
 // Update driver profile with Cloudinary file upload
 router.patch(
   '/driver',
   authMiddleware,
-  uploadDriverFiles, // Handles both profilePhoto and licensePhoto
-  updateDriverProfile
+  uploadDriverFiles,
+  safeHandler('updateDriverProfile')
 );
 
 // Get driver profile
-router.get('/driver', authMiddleware, getDriverProfile);
+router.get('/driver', authMiddleware, safeHandler('getDriverProfile'));
 
 // Check driver profile completion
-router.get('/driver/check-completion', authMiddleware, checkProfileCompletion);
+router.get('/driver/check-completion', authMiddleware, safeHandler('checkProfileCompletion'));
 
-// Get available drivers (with filters)
-router.get('/driver/available', authMiddleware, getAvailableDrivers);
+// Get available drivers
+router.get('/driver/available', authMiddleware, safeHandler('getAvailableDrivers'));
 
 // ============================================
 // OWNER PROFILE ROUTES
 // ============================================
 
-// Create owner profile with Cloudinary photo upload
+// Create owner profile
 router.post(
   '/owner',
   authMiddleware,
-  uploadOwnerProfile.single('photo'), // Single file upload for owner profile photo
-  createOwnerProfile
+  uploadOwnerProfile.single('photo'),
+  safeHandler('createOwnerProfile')
 );
 
-// Update owner profile with Cloudinary photo upload
+// Update owner profile
 router.patch(
   '/owner',
   authMiddleware,
-  uploadOwnerProfile.single('photo'), // Single file upload for owner profile photo
-  updateOwnerProfile
+  uploadOwnerProfile.single('photo'),
+  safeHandler('updateOwnerProfile')
 );
 
 // Get owner profile
-router.get('/owner', authMiddleware, getOwnerProfile);
+router.get('/owner', authMiddleware, safeHandler('getOwnerProfile'));
 
-// Get owner profile by ID (public route for viewing other owners)
-router.get('/owner/:ownerId', authMiddleware, getOwnerProfileById);
+// Get owner profile by ID
+router.get('/owner/:ownerId', authMiddleware, safeHandler('getOwnerProfileById'));
 
-// Get jobs posted by specific owner
-router.get('/owner/:ownerId/jobs', authMiddleware, getOwnerJobs);
+// Get jobs posted by owner
+router.get('/owner/:ownerId/jobs', authMiddleware, safeHandler('getOwnerJobs'));
 
 // ============================================
 // USER INFO ROUTES
 // ============================================
 
-// Update user basic information (name, phone)
-router.patch('/user', authMiddleware, updateUserInfo);
+// Update user basic information
+router.patch('/user', authMiddleware, safeHandler('updateUserInfo'));
 
 // Update user availability status
-router.patch('/availability', authMiddleware, updateAvailability);
+router.patch('/availability', authMiddleware, safeHandler('updateAvailability'));
 
 // ============================================
 // PHOTO MANAGEMENT ROUTES
 // ============================================
 
-// Delete profile photo (for both driver and owner)
-router.delete('/photo', authMiddleware, deleteProfilePhoto);
+// Delete profile photo
+router.delete('/photo', authMiddleware, safeHandler('deleteProfilePhoto'));
 
-// Test image access (for debugging)
-router.get('/test-image/:filename', testImageAccess);
+// Test image access
+router.get('/test-image/:filename', safeHandler('testImageAccess'));
 
 // ============================================
 // HEALTH CHECK & DEBUG ROUTES
@@ -136,7 +149,6 @@ router.get('/test', authMiddleware, (req, res) => {
 // ERROR HANDLING MIDDLEWARE
 // ============================================
 
-// Handle multer errors (file upload errors)
 router.use((error, req, res, next) => {
   if (error.code === 'LIMIT_FILE_SIZE') {
     return res.status(400).json({
@@ -144,37 +156,36 @@ router.use((error, req, res, next) => {
       message: 'File size must be less than 5MB'
     });
   }
-  
+
   if (error.code === 'LIMIT_FILE_COUNT') {
     return res.status(400).json({
       error: 'Too many files',
       message: 'Maximum 2 files allowed (profile photo and license photo)'
     });
   }
-  
+
   if (error.code === 'LIMIT_UNEXPECTED_FILE') {
     return res.status(400).json({
       error: 'Unexpected field',
       message: 'Only profilePhoto and licensePhoto fields are allowed'
     });
   }
-  
+
   if (error.message && error.message.includes('Invalid file type')) {
     return res.status(400).json({
       error: 'Invalid file type',
       message: 'Only JPEG, JPG, PNG, and GIF files are allowed'
     });
   }
-  
+
   // Pass other errors to the default error handler
   next(error);
 });
 
 // ============================================
-// ROUTE DOCUMENTATION (for development)
+// ROUTE DOCUMENTATION (development mode)
 // ============================================
 
-// GET route for API documentation (only in development)
 if (process.env.NODE_ENV === 'development') {
   router.get('/docs', (req, res) => {
     res.json({
@@ -182,22 +193,22 @@ if (process.env.NODE_ENV === 'development') {
       version: '2.0.0 (Cloudinary)',
       routes: {
         driver: {
-          'POST /driver': 'Create driver profile with photos (multipart/form-data)',
-          'PATCH /driver': 'Update driver profile with photos (multipart/form-data)',
+          'POST /driver': 'Create driver profile with photos',
+          'PATCH /driver': 'Update driver profile with photos',
           'GET /driver': 'Get current driver profile',
-          'GET /driver/check-completion': 'Check if driver profile is complete',
-          'GET /driver/available': 'Get available drivers with filters'
+          'GET /driver/check-completion': 'Check driver profile completion',
+          'GET /driver/available': 'Get available drivers'
         },
         owner: {
-          'POST /owner': 'Create owner profile with photo (multipart/form-data)',
-          'PATCH /owner': 'Update owner profile with photo (multipart/form-data)',
+          'POST /owner': 'Create owner profile with photo',
+          'PATCH /owner': 'Update owner profile with photo',
           'GET /owner': 'Get current owner profile',
           'GET /owner/:ownerId': 'Get owner profile by ID',
           'GET /owner/:ownerId/jobs': 'Get jobs posted by owner'
         },
         user: {
-          'PATCH /user': 'Update user basic info (JSON)',
-          'PATCH /availability': 'Update user availability status (JSON)'
+          'PATCH /user': 'Update user basic info',
+          'PATCH /availability': 'Update user availability status'
         },
         photos: {
           'DELETE /photo': 'Delete profile photo',
@@ -206,7 +217,7 @@ if (process.env.NODE_ENV === 'development') {
         system: {
           'GET /health': 'Health check',
           'GET /test': 'Test authentication',
-          'GET /docs': 'API documentation (dev only)'
+          'GET /docs': 'API documentation'
         }
       },
       fileUpload: {

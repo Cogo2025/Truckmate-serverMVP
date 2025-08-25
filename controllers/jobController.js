@@ -2,28 +2,206 @@ const JobPost = require('../models/JobPost');
 const DriverProfile = require('../models/DriverProfile');
 const Like = require('../models/Like');
 const User = require('../models/User');
-const mongoose = require('mongoose'); // Add this missing import
+const mongoose = require('mongoose');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('../config/cloudinary');
+const multer = require('multer');
 
-// Define all controller functions first
+// Cloudinary storage configuration for job photos
+const jobPhotosStorage = new CloudinaryStorage({
+  cloudinary,
+  params: (req, file) => {
+    return {
+      folder: 'truckmate/jobs',
+      format: 'jpg',
+      public_id: `${req.userId}-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      transformation: [
+        { width: 800, height: 600, crop: 'limit' },
+        { quality: 'auto' }
+      ]
+    };
+  }
+});
+
+const upload = multer({
+  storage: jobPhotosStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'), false);
+    }
+  }
+});
+
+// Helper function to delete job images from Cloudinary
+const deleteJobImages = async (imageUrls) => {
+  try {
+    if (!imageUrls || imageUrls.length === 0) return;
+    
+    for (const imageUrl of imageUrls) {
+      if (!imageUrl) continue;
+      
+      // Extract public_id from Cloudinary URL
+      const parts = imageUrl.split('/');
+      const filename = parts[parts.length - 1];
+      const publicId = filename.split('.')[0];
+      const folder = parts.slice(-2, -1)[0];
+      const fullPublicId = `${folder}/${publicId}`;
+      
+      await cloudinary.uploader.destroy(fullPublicId);
+    }
+  } catch (error) {
+    console.error('Error deleting Cloudinary images:', error);
+  }
+};
+
+// Update createJob function to use Cloudinary
+// jobController.js - Update createJob function
 const createJob = async (req, res) => {
   try {
-    // Ensure lorryPhotos is an array
-    const lorryPhotos = Array.isArray(req.body.lorryPhotos) 
-      ? req.body.lorryPhotos 
-      : req.body.lorryPhotos ? [req.body.lorryPhotos] : [];
+    // Check if lorryPhotos array exists and has at least one URL
+    if (!req.body.lorryPhotos || req.body.lorryPhotos.length === 0) {
+      return res.status(400).json({ error: "At least one photo is required" });
+    }
 
-    const job = await JobPost.create({ 
-      ...req.body, 
-      lorryPhotos,
-      ownerId: req.userId 
+    const job = await JobPost.create({
+      truckType: req.body.truckType,
+      variant: {
+        type: req.body.variant?.type,
+        wheelsOrFeet: req.body.variant?.wheelsOrFeet
+      },
+      sourceLocation: req.body.sourceLocation,
+      experienceRequired: req.body.experienceRequired,
+      dutyType: req.body.dutyType,
+      salaryType: req.body.salaryType,
+      salaryRange: {
+        min: req.body.salaryRange?.min,
+        max: req.body.salaryRange?.max
+      },
+      description: req.body.description,
+      phone: req.body.phone,
+      lorryPhotos: req.body.lorryPhotos, // Use the Cloudinary URLs from request body
+      ownerId: req.userId
     });
-    
-    res.status(201).json(job);
+
+    res.status(201).json({
+      success: true,
+      data: job
+    });
   } catch (err) {
+    console.error('Error creating job:', err);
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
+  }
+};
+// Update deleteJob function to clean up images
+const deleteJob = async (req, res) => {
+  try {
+    const jobId = req.params.jobId;
+    
+    if (!mongoose.Types.ObjectId.isValid(jobId)) {
+      return res.status(400).json({ error: "Invalid job ID format" });
+    }
+
+    const job = await JobPost.findById(jobId);
+    
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    if (job.ownerId !== req.userId) {
+      return res.status(403).json({ error: 'You are not authorized to delete this job' });
+    }
+
+    // Delete images from Cloudinary first
+    await deleteJobImages(job.lorryPhotos);
+
+    await JobPost.findByIdAndDelete(jobId);
+    
+    await Like.deleteMany({
+      likedItemId: jobId,
+      likedType: 'job'
+    });
+
+    res.status(200).json({ message: 'Job deleted successfully' });
+    
+  } catch (err) {
+    console.error('Error in deleteJob:', err);
     res.status(500).json({ error: err.message });
   }
 };
 
+// Update uploadImages function for job photos
+const uploadImages = async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: "No files uploaded" });
+    }
+    
+    const urls = req.files.map(file => file.path);
+    res.status(200).json({ 
+      success: true,
+      urls 
+    });
+  } catch (err) {
+    console.error('Upload error:', err);
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
+  }
+};
+
+// Update updateJob function to handle image uploads
+const updateJob = async (req, res) => {
+  try {
+    const jobId = req.params.jobId;
+    const job = await JobPost.findById(jobId);
+    
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    
+    if (job.ownerId !== req.userId) {
+      return res.status(403).json({ error: 'You are not authorized to update this job' });
+    }
+
+    // Handle new image uploads
+    let newPhotoUrls = [];
+    if (req.files && req.files.length > 0) {
+      newPhotoUrls = req.files.map(file => file.path);
+    }
+
+    // Combine existing photos with new ones
+    const updatedLorryPhotos = [
+      ...(job.lorryPhotos || []),
+      ...newPhotoUrls
+    ];
+
+    // Update job with new data
+    const updatedJob = await JobPost.findByIdAndUpdate(
+      jobId,
+      {
+        ...req.body,
+        lorryPhotos: updatedLorryPhotos
+      },
+      { new: true, runValidators: true }
+    );
+
+    res.status(200).json(updatedJob);
+  } catch (err) {
+    console.error('Error in updateJob:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Keep all existing functions and add the new ones
 const getJobs = async (req, res) => {
   try {
     const jobs = await JobPost.aggregate([
@@ -43,14 +221,12 @@ const getJobs = async (req, res) => {
       },
       {
         $project: {
-          owner: 0 // Remove the owner array from final result
+          owner: 0
         }
       },
-      {
-        $sort: { createdAt: -1 }
-      }
+      { $sort: { createdAt: -1 } }
     ]);
-    
+
     res.status(200).json(jobs);
   } catch (err) {
     console.error('Error in getJobs:', err);
@@ -73,21 +249,17 @@ const getJobsForDriver = async (req, res) => {
     
     console.log('Incoming query params:', req.query);
 
-    // Only apply filters if query parameters exist
     if (Object.keys(req.query).length > 0) {
-      // Apply truck type filter ONLY if explicitly requested
       if (req.query.truckType) {
         filters.truckType = req.query.truckType;
       }
       
-      // Location filter - exact match (case insensitive)
       if (req.query.sourceLocation) {
         filters.sourceLocation = { 
           $regex: new RegExp(`^${req.query.sourceLocation}$`, 'i') 
         };
       }
       
-      // Salary range filter
       if (req.query.minSalary || req.query.maxSalary) {
         filters.$and = [];
         
@@ -110,27 +282,22 @@ const getJobsForDriver = async (req, res) => {
         }
       }
       
-      // Variant type filter
       if (req.query.variantType) {
         filters['variant.type'] = req.query.variantType;
       }
       
-      // Wheels/feet filter
       if (req.query.wheelsOrFeet) {
         filters['variant.wheelsOrFeet'] = req.query.wheelsOrFeet;
       }
       
-      // Experience filter
       if (req.query.experienceRequired) {
         filters.experienceRequired = req.query.experienceRequired;
       }
       
-      // Duty type filter
       if (req.query.dutyType) {
         filters.dutyType = req.query.dutyType;
       }
       
-      // Salary type filter
       if (req.query.salaryType) {
         filters.salaryType = req.query.salaryType;
       }
@@ -156,7 +323,7 @@ const getJobsForDriver = async (req, res) => {
       },
       {
         $project: {
-          owner: 0 // Remove the owner array from final result
+          owner: 0
         }
       },
       { $sort: { createdAt: -1 } },
@@ -242,10 +409,8 @@ const getJobsByOwnerId = async (req, res) => {
   }
 };
 
-// Updated getJobDetails function to include owner information
 const getJobDetails = async (req, res) => {
   try {
-    // Validate ObjectId format
     if (!mongoose.Types.ObjectId.isValid(req.params.jobId)) {
       return res.status(400).json({ error: "Invalid job ID format" });
     }
@@ -268,7 +433,7 @@ const getJobDetails = async (req, res) => {
       },
       {
         $project: {
-          owner: 0 // Remove the owner array from final result
+          owner: 0
         }
       }
     ]);
@@ -279,13 +444,11 @@ const getJobDetails = async (req, res) => {
 
     const job = jobs[0];
 
-    // Get like count
     const likeCount = await Like.countDocuments({
       likedItemId: job._id.toString(),
       likedType: 'job'
     });
 
-    // Check if current user liked this job
     let isLiked = false;
     if (req.userId) {
       const userLike = await Like.findOne({
@@ -309,94 +472,22 @@ const getJobDetails = async (req, res) => {
     });
   }
 };
-const updateJob = async (req, res) => {
-  try {
-    const jobId = req.params.jobId;
-    const job = await JobPost.findById(jobId);
-    
-    if (!job) {
-      return res.status(404).json({ error: 'Job not found' });
-    }
-    
-    // Check ownership
-    if (job.ownerId !== req.userId) {
-      return res.status(403).json({ error: 'You are not authorized to update this job' });
-    }
-    
-    // Update fields (including overwriting lorryPhotos with existing ones)
-    Object.assign(job, req.body);
-    await job.save();
-    
-    res.status(200).json(job);
-  } catch (err) {
-    console.error('Error in updateJob:', err);
-    res.status(500).json({ error: err.message });
-  }
-};
 
-// New: Upload photos to job
 const uploadJobPhotos = async (req, res) => {
   try {
     const jobId = req.params.jobId;
     const job = await JobPost.findById(jobId);
-    
-    if (!job) {
-      return res.status(404).json({ error: 'Job not found' });
-    }
-    
-    // Check ownership
-    if (job.ownerId !== req.userId) {
-      return res.status(403).json({ error: 'You are not authorized to upload photos to this job' });
-    }
-    
-    // Add new photo URLs (assuming baseUrl is your server URL)
-    const newPhotos = req.files.map(file => `${req.protocol}://${req.get('host')}/uploads/${file.filename}`);
-    job.lorryPhotos = [...job.lorryPhotos, ...newPhotos];
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (job.ownerId !== req.userId) return res.status(403).json({ error: 'Not authorized' });
+    const newPhotos = req.files.map(file => file.path);
+    job.lorryPhotos = [...(job.lorryPhotos || []), ...newPhotos];
     await job.save();
-    
-    res.status(200).json({ message: 'Photos uploaded successfully', lorryPhotos: job.lorryPhotos });
+    res.status(200).json({ message: 'Photos uploaded', lorryPhotos: job.lorryPhotos });
   } catch (err) {
-    console.error('Error in uploadJobPhotos:', err);
     res.status(500).json({ error: err.message });
   }
 };
-const deleteJob = async (req, res) => {
-  try {
-    const jobId = req.params.jobId;
-    
-    // Validate ObjectId format
-    if (!mongoose.Types.ObjectId.isValid(jobId)) {
-      return res.status(400).json({ error: "Invalid job ID format" });
-    }
 
-    const job = await JobPost.findById(jobId);
-    
-    if (!job) {
-      return res.status(404).json({ error: 'Job not found' });
-    }
-
-    // Check ownership - ensure only the owner can delete
-    if (job.ownerId !== req.userId) {
-      return res.status(403).json({ error: 'You are not authorized to delete this job' });
-    }
-
-    // Delete the job
-    await JobPost.findByIdAndDelete(jobId);
-    
-    // Optional: Also delete related likes
-    await Like.deleteMany({
-      likedItemId: jobId,
-      likedType: 'job'
-    });
-
-    res.status(200).json({ message: 'Job deleted successfully' });
-    
-  } catch (err) {
-    console.error('Error in deleteJob:', err);
-    res.status(500).json({ error: err.message });
-  }
-};
-// Export all functions (add the new ones)
 module.exports = {
   createJob,
   getJobs,
@@ -405,7 +496,9 @@ module.exports = {
   getFilterOptions,
   getJobsByOwnerId,
   getJobDetails,
-  updateJob, // New
-  uploadJobPhotos ,// New
-  deleteJob  
+  updateJob,
+  uploadJobPhotos,
+  deleteJob,
+  upload,
+  uploadImages
 };

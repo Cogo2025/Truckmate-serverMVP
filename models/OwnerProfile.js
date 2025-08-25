@@ -1,4 +1,4 @@
-// models/OwnerProfile.js
+// OwnerProfile.js - Updated model
 const mongoose = require('mongoose');
 
 const ownerProfileSchema = new mongoose.Schema({
@@ -11,13 +11,12 @@ const ownerProfileSchema = new mongoose.Schema({
     enum: ['Male', 'Female', 'Other', 'Not Specified'],
     default: 'Not Specified'
   },
-  photoUrl: { type: String, required: false }, // Photo URL stored here
+  photoUrl: { type: String }, // Store Base64 string directly
   companyInfoCompleted: { type: Boolean, default: false }
 }, {
-  timestamps: true // Automatically add createdAt and updatedAt
+  timestamps: true
 });
 
-// Add index for faster queries
 ownerProfileSchema.index({ userId: 1 });
 
 module.exports = mongoose.model('OwnerProfile', ownerProfileSchema);

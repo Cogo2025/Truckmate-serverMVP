@@ -1,139 +1,229 @@
+// profileRoutes.js - Updated for Cloudinary storage
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const { authMiddleware } = require('../middleware/authMiddleware');
 const profileController = require('../controllers/profileController');
 const jobController = require('../controllers/jobController');
 
-// ✅ Ensure uploads directory exists
-const uploadDir = 'uploads/';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// Import multer configurations from controller
+const {
+  uploadDriverFiles,
+  uploadOwnerProfile,
+  createDriverProfile,
+  createOwnerProfile,
+  getDriverProfile,
+  getOwnerProfile,
+  updateDriverProfile,
+  updateOwnerProfile,
+  getOwnerProfileById,
+  getOwnerJobs,
+  deleteProfilePhoto,
+  testImageAccess,
+  updateUserInfo,
+  checkProfileCompletion,
+  updateAvailability,
+  getAvailableDrivers
+} = profileController;
 
-// ✅ Setup multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    // Generate unique filename
-    const ext = path.extname(file.originalname);
-    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${ext}`;
-    cb(null, uniqueName);
-  }
-});
+// ============================================
+// DRIVER PROFILE ROUTES
+// ============================================
 
-// ✅ File filter for images only
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only image files are allowed (JPEG, JPG, PNG, GIF)'), false);
-  }
-};
+// Create driver profile with Cloudinary file upload (profile + license photos)
+router.post(
+  '/driver',
+  authMiddleware,
+  uploadDriverFiles, // Handles both profilePhoto and licensePhoto
+  createDriverProfile
+);
 
-// ✅ Configure multer for single file uploads
-const upload = multer({ 
-  storage,
-  fileFilter,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
-  }
-});
+// Update driver profile with Cloudinary file upload
+router.patch(
+  '/driver',
+  authMiddleware,
+  uploadDriverFiles, // Handles both profilePhoto and licensePhoto
+  updateDriverProfile
+);
 
-// ✅ NEW: Configure multer for multiple file uploads (for driver profile)
-const uploadMultiple = multer({ 
-  storage,
-  fileFilter,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit per file
-  }
-});
+// Get driver profile
+router.get('/driver', authMiddleware, getDriverProfile);
 
-// ✅ Error handling middleware for multer
-const handleMulterError = (err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'File size too large. Maximum 5MB allowed.' });
-    }
-    return res.status(400).json({ error: `Upload error: ${err.message}` });
-  }
-  
-  if (err.message === 'Only image files are allowed (JPEG, JPG, PNG, GIF)') {
-    return res.status(400).json({ error: err.message });
-  }
-  
-  next(err);
-};
+// Check driver profile completion
+router.get('/driver/check-completion', authMiddleware, checkProfileCompletion);
 
-// ✅ NEW: User info update route
-router.patch('/user', authMiddleware, profileController.updateUserInfo);
+// Get available drivers (with filters)
+router.get('/driver/available', authMiddleware, getAvailableDrivers);
 
-// ✅ MODIFIED: Driver Profile Routes with multiple file upload support
-router.get('/driver', authMiddleware, profileController.getDriverProfile);
+// ============================================
+// OWNER PROFILE ROUTES
+// ============================================
 
-// ✅ NEW: Driver profile creation with support for both license and profile photos
-router.post('/driver', authMiddleware, uploadMultiple.fields([
-  { name: 'licensePhoto', maxCount: 1 },
-  { name: 'profilePhoto', maxCount: 1 }
-]), handleMulterError, profileController.createDriverProfile);
-router.get('/driver/available', authMiddleware, profileController.getAvailableDrivers);
+// Create owner profile with Cloudinary photo upload
+router.post(
+  '/owner',
+  authMiddleware,
+  uploadOwnerProfile.single('photo'), // Single file upload for owner profile photo
+  createOwnerProfile
+);
 
-// ✅ NEW: Driver profile update with support for both license and profile photos
-router.patch('/driver', authMiddleware, uploadMultiple.fields([
-  { name: 'licensePhoto', maxCount: 1 },
-  { name: 'profilePhoto', maxCount: 1 }
-]), handleMulterError, profileController.updateDriverProfile);
-// Add this route in profileRoutes.js
-router.patch('/availability', authMiddleware, profileController.updateAvailability);
-// ✅ Owner Profile Routes (unchanged)
-router.get('/owner', authMiddleware, profileController.getOwnerProfile);
-router.post('/owner', authMiddleware, upload.single('photo'), handleMulterError, profileController.createOwnerProfile);
-router.patch('/owner', authMiddleware, upload.single('photo'), handleMulterError, profileController.updateOwnerProfile);
-router.get('/owner/:ownerId', authMiddleware, profileController.getOwnerProfileById);
-router.get('/owner/:ownerId/jobs', authMiddleware, jobController.getJobsByOwnerId);
-router.get('/driver/check-completion', authMiddleware, profileController.checkProfileCompletion);
+// Update owner profile with Cloudinary photo upload
+router.patch(
+  '/owner',
+  authMiddleware,
+  uploadOwnerProfile.single('photo'), // Single file upload for owner profile photo
+  updateOwnerProfile
+);
 
-// ✅ Delete profile photo route (supports both license and profile photos)
-router.delete('/photo', authMiddleware, profileController.deleteProfilePhoto);
+// Get owner profile
+router.get('/owner', authMiddleware, getOwnerProfile);
 
-// ✅ Test routes
-router.get('/test-image/:filename', profileController.testImageAccess);
+// Get owner profile by ID (public route for viewing other owners)
+router.get('/owner/:ownerId', authMiddleware, getOwnerProfileById);
 
-// Test route to list all uploaded files
-router.get('/test-uploads', (req, res) => {
-  try {
-    const uploadsDir = path.join(__dirname, '../uploads');
-    const files = fs.readdirSync(uploadsDir);
-    
-    const fileList = files.map(file => ({
-      filename: file,
-      url: `${process.env.BASE_URL || 'http://192.168.29.138:5000'}/uploads/${file}`,
-      path: path.join(uploadsDir, file)
-    }));
-    
-    res.json({
-      success: true,
-      message: `Found ${files.length} files`,
-      files: fileList,
-      baseUrl: process.env.BASE_URL || 'http://192.168.29.138:5000'
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Get jobs posted by specific owner
+router.get('/owner/:ownerId/jobs', authMiddleware, getOwnerJobs);
 
-// ✅ Health check route
+// ============================================
+// USER INFO ROUTES
+// ============================================
+
+// Update user basic information (name, phone)
+router.patch('/user', authMiddleware, updateUserInfo);
+
+// Update user availability status
+router.patch('/availability', authMiddleware, updateAvailability);
+
+// ============================================
+// PHOTO MANAGEMENT ROUTES
+// ============================================
+
+// Delete profile photo (for both driver and owner)
+router.delete('/photo', authMiddleware, deleteProfilePhoto);
+
+// Test image access (for debugging)
+router.get('/test-image/:filename', testImageAccess);
+
+// ============================================
+// HEALTH CHECK & DEBUG ROUTES
+// ============================================
+
+// Health check route
 router.get('/health', (req, res) => {
-  res.status(200).json({ 
-    message: 'Profile routes are working',
+  res.status(200).json({
+    message: 'Profile routes are working with Cloudinary support',
     timestamp: new Date().toISOString(),
-    baseUrl: process.env.BASE_URL || 'http://192.168.29.138:5000'
+    mode: 'Cloudinary Storage',
+    baseUrl: process.env.BASE_URL || 'http://localhost:5000',
+    cloudinary: {
+      configured: !!process.env.CLOUDINARY_CLOUD_NAME,
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME || 'Not configured'
+    }
   });
 });
+
+// Test route for debugging authentication
+router.get('/test', authMiddleware, (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Profile routes are working correctly with Cloudinary',
+    user: req.userId,
+    timestamp: new Date().toISOString(),
+    authenticationWorking: true
+  });
+});
+
+// ============================================
+// ERROR HANDLING MIDDLEWARE
+// ============================================
+
+// Handle multer errors (file upload errors)
+router.use((error, req, res, next) => {
+  if (error.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({
+      error: 'File too large',
+      message: 'File size must be less than 5MB'
+    });
+  }
+  
+  if (error.code === 'LIMIT_FILE_COUNT') {
+    return res.status(400).json({
+      error: 'Too many files',
+      message: 'Maximum 2 files allowed (profile photo and license photo)'
+    });
+  }
+  
+  if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(400).json({
+      error: 'Unexpected field',
+      message: 'Only profilePhoto and licensePhoto fields are allowed'
+    });
+  }
+  
+  if (error.message && error.message.includes('Invalid file type')) {
+    return res.status(400).json({
+      error: 'Invalid file type',
+      message: 'Only JPEG, JPG, PNG, and GIF files are allowed'
+    });
+  }
+  
+  // Pass other errors to the default error handler
+  next(error);
+});
+
+// ============================================
+// ROUTE DOCUMENTATION (for development)
+// ============================================
+
+// GET route for API documentation (only in development)
+if (process.env.NODE_ENV === 'development') {
+  router.get('/docs', (req, res) => {
+    res.json({
+      title: 'Profile API Documentation',
+      version: '2.0.0 (Cloudinary)',
+      routes: {
+        driver: {
+          'POST /driver': 'Create driver profile with photos (multipart/form-data)',
+          'PATCH /driver': 'Update driver profile with photos (multipart/form-data)',
+          'GET /driver': 'Get current driver profile',
+          'GET /driver/check-completion': 'Check if driver profile is complete',
+          'GET /driver/available': 'Get available drivers with filters'
+        },
+        owner: {
+          'POST /owner': 'Create owner profile with photo (multipart/form-data)',
+          'PATCH /owner': 'Update owner profile with photo (multipart/form-data)',
+          'GET /owner': 'Get current owner profile',
+          'GET /owner/:ownerId': 'Get owner profile by ID',
+          'GET /owner/:ownerId/jobs': 'Get jobs posted by owner'
+        },
+        user: {
+          'PATCH /user': 'Update user basic info (JSON)',
+          'PATCH /availability': 'Update user availability status (JSON)'
+        },
+        photos: {
+          'DELETE /photo': 'Delete profile photo',
+          'GET /test-image/:filename': 'Test image access'
+        },
+        system: {
+          'GET /health': 'Health check',
+          'GET /test': 'Test authentication',
+          'GET /docs': 'API documentation (dev only)'
+        }
+      },
+      fileUpload: {
+        maxSize: '5MB',
+        allowedFormats: ['jpg', 'jpeg', 'png', 'gif'],
+        cloudinaryFolders: {
+          drivers: {
+            profiles: 'truckmate/drivers/profiles',
+            licenses: 'truckmate/drivers/licenses'
+          },
+          owners: {
+            profiles: 'truckmate/owners/profiles'
+          }
+        }
+      }
+    });
+  });
+}
 
 module.exports = router;

@@ -4,159 +4,120 @@ const DriverProfile = require('../models/DriverProfile');
 const OwnerProfile = require('../models/OwnerProfile');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const VerificationRequest = require('../models/VerificationRequest'); // ✅ ADD THIS LINE
+const VerificationRequest = require('../models/VerificationRequest');
 
 // Generate JWT token
 const generateToken = (adminId) => {
-  return jwt.sign({ adminId, isAdmin: true }, process.env.JWT_SECRET, { 
-    expiresIn: '8h' 
+  return jwt.sign({ adminId, isAdmin: true }, process.env.JWT_SECRET, {
+    expiresIn: '8h'
   });
 };
 
-// Initial admin login (first time setup)
+// Initial admin login or setup
 const initialLogin = async (req, res) => {
   try {
     const { username, password } = req.body;
-    
+
     // Check if any admin exists
-    const adminCount = await Admin.countDocuments();
-    
-    if (adminCount > 0) {
-      return res.status(403).json({
-        error: "Unauthorized access. Admin account already exists."
-      });
-    }
-    
-    // Check credentials for first admin
-    if (username !== '123user' || password !== '123user') {
-      return res.status(401).json({
-        error: "Invalid credentials for initial setup"
-      });
-    }
-    
-    // Create first admin account
-    const firstAdmin = await Admin.create({
-      username: '123user',
-      password: '123user',
-      isFirstLogin: true
-    });
-    
-    const token = generateToken(firstAdmin._id);
-    
-    res.status(200).json({
-      success: true,
-      message: "First admin created. Please change your password.",
-      token,
-      admin: {
-        id: firstAdmin._id,
-        username: firstAdmin.username,
-        isFirstLogin: true
+    const existingAdmin = await Admin.findOne({ username });
+
+    if (!existingAdmin) {
+      // If no admin exists → create the first admin
+      if (username !== '123user' || password !== '123user') {
+        return res.status(401).json({
+          error: "Invalid initial credentials. Use default admin: 123user / 123user"
+        });
       }
-    });
-    
+
+      const firstAdmin = await Admin.create({
+        username: '123user',
+        password: '123user',
+        isFirstLogin: true,
+        isActive: true
+      });
+
+      const token = generateToken(firstAdmin._id);
+
+      return res.status(200).json({
+        success: true,
+        message: "First admin created successfully.",
+        token,
+        admin: {
+          id: firstAdmin._id,
+          username: firstAdmin.username,
+          isFirstLogin: true
+        }
+      });
+    } else {
+      // If admin exists → login validation
+      const isPasswordCorrect = await existingAdmin.comparePassword(password);
+      if (!isPasswordCorrect) {
+        return res.status(401).json({
+          error: "Invalid password"
+        });
+      }
+
+      existingAdmin.lastLogin = new Date();
+      await existingAdmin.save();
+
+      const token = generateToken(existingAdmin._id);
+
+      return res.status(200).json({
+        success: true,
+        message: "Login successful",
+        token,
+        admin: {
+          id: existingAdmin._id,
+          username: existingAdmin.username,
+          isFirstLogin: !!existingAdmin.isFirstLogin,
+          lastLogin: existingAdmin.lastLogin
+        }
+      });
+    }
   } catch (err) {
     console.error('Initial login error:', err);
-    res.status(500).json({ 
-      error: "Server error", 
-      details: err.message 
+    res.status(500).json({
+      error: "Server error",
+      details: err.message
     });
   }
 };
 
-// Admin login
-const adminLogin = async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    
-    // Find admin
-    const admin = await Admin.findOne({ username, isActive: true });
-    if (!admin) {
-      return res.status(401).json({
-        error: "Invalid credentials"
-      });
-    }
-    
-    // Check password
-    const isPasswordCorrect = await admin.comparePassword(password);
-    if (!isPasswordCorrect) {
-      return res.status(401).json({
-        error: "Invalid credentials"
-      });
-    }
-    
-    // Update last login
-    admin.lastLogin = new Date();
-    await admin.save();
-    
-    const token = generateToken(admin._id);
-   res.status(200).json({
-  success: true,
-  message: "Login successful",
-  token,
-  admin: {
-    id: admin._id,
-    username: admin.username,
-    isFirstLogin: !!admin.isFirstLogin, // Force boolean
-    lastLogin: admin.lastLogin
-  }
-});
-    
-  } catch (err) {
-    console.error('Admin login error:', err);
-    res.status(500).json({ 
-      error: "Server error", 
-      details: err.message 
-    });
-  }
-};
+// Reuse initialLogin for adminLogin endpoint
+const adminLogin = initialLogin;
 
-// Change password
+// Change admin password
 const changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     const adminId = req.adminId;
-    
-    // Validation
+
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({
         error: "New password must be at least 6 characters long"
       });
     }
-    
-    // Find admin
+
     const admin = await Admin.findById(adminId);
     if (!admin) {
-      return res.status(404).json({
-        error: "Admin not found"
-      });
+      return res.status(404).json({ error: "Admin not found" });
     }
-    
-    // Check current password (unless it's first login)
+
     if (!admin.isFirstLogin) {
       const isCurrentPasswordCorrect = await admin.comparePassword(currentPassword);
       if (!isCurrentPasswordCorrect) {
-        return res.status(401).json({
-          error: "Current password is incorrect"
-        });
+        return res.status(401).json({ error: "Current password is incorrect" });
       }
     }
-    
-    // Update password
+
     admin.password = newPassword;
     admin.isFirstLogin = false;
     await admin.save();
-    
-    res.status(200).json({
-      success: true,
-      message: "Password changed successfully"
-    });
-    
+
+    res.status(200).json({ success: true, message: "Password changed successfully" });
   } catch (err) {
     console.error('Change password error:', err);
-    res.status(500).json({ 
-      error: "Server error", 
-      details: err.message 
-    });
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 };
 
@@ -165,36 +126,28 @@ const createNewAdmin = async (req, res) => {
   try {
     const { username, password } = req.body;
     const createdBy = req.adminId;
-    
-    // Validation
+
     if (!username || !password) {
-      return res.status(400).json({
-        error: "Username and password are required"
-      });
+      return res.status(400).json({ error: "Username and password are required" });
     }
-    
+
     if (password.length < 6) {
-      return res.status(400).json({
-        error: "Password must be at least 6 characters long"
-      });
+      return res.status(400).json({ error: "Password must be at least 6 characters long" });
     }
-    
-    // Check if username already exists
+
     const existingAdmin = await Admin.findOne({ username });
     if (existingAdmin) {
-      return res.status(400).json({
-        error: "Username already exists"
-      });
+      return res.status(400).json({ error: "Username already exists" });
     }
-    
-    // Create new admin
+
     const newAdmin = await Admin.create({
       username,
       password,
       createdBy,
-      isFirstLogin: true
+      isFirstLogin: true,
+      isActive: true
     });
-    
+
     res.status(201).json({
       success: true,
       message: "New admin created successfully",
@@ -204,23 +157,18 @@ const createNewAdmin = async (req, res) => {
         createdAt: newAdmin.createdAt
       }
     });
-    
   } catch (err) {
     console.error('Create admin error:', err);
-    res.status(500).json({ 
-      error: "Server error", 
-      details: err.message 
-    });
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 };
 
+// Dashboard data API
 const getDashboardData = async (req, res) => {
   try {
-    // Recent users (last 7 days)
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    // Get verification stats
     const verificationStats = await VerificationRequest.aggregate([
       {
         $group: {
@@ -232,7 +180,6 @@ const getDashboardData = async (req, res) => {
       }
     ]);
 
-    // Get user counts
     const [totalUsers, totalDrivers, totalOwners, activeDrivers, recentUsers] = await Promise.all([
       User.countDocuments(),
       User.countDocuments({ role: 'driver' }),
@@ -309,12 +256,10 @@ const getDashboardData = async (req, res) => {
     });
   } catch (err) {
     console.error('Dashboard data error:', err);
-    res.status(500).json({ 
-      error: "Server error", 
-      details: err.message 
-    });
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 };
+
 // Get all drivers
 const getAllDrivers = async (req, res) => {
   try {
@@ -328,12 +273,7 @@ const getAllDrivers = async (req, res) => {
           as: 'profile'
         }
       },
-      {
-        $unwind: {
-          path: '$profile',
-          preserveNullAndEmptyArrays: true
-        }
-      },
+      { $unwind: { path: '$profile', preserveNullAndEmptyArrays: true } },
       {
         $project: {
           _id: 0,
@@ -359,21 +299,15 @@ const getAllDrivers = async (req, res) => {
       },
       { $sort: { createdAt: -1 } }
     ]);
-    
-    res.status(200).json({
-      success: true,
-      drivers
-    });
-    
+
+    res.status(200).json({ success: true, drivers });
   } catch (err) {
     console.error('Get drivers error:', err);
-    res.status(500).json({ 
-      error: "Server error", 
-      details: err.message 
-    });
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 };
 
+// Get all owners
 const getAllOwners = async (req, res) => {
   try {
     const owners = await User.aggregate([
@@ -386,12 +320,7 @@ const getAllOwners = async (req, res) => {
           as: 'profile'
         }
       },
-      {
-        $unwind: {
-          path: '$profile',
-          preserveNullAndEmptyArrays: true
-        }
-      },
+      { $unwind: { path: '$profile', preserveNullAndEmptyArrays: true } },
       {
         $project: {
           _id: 0,
@@ -399,9 +328,7 @@ const getAllOwners = async (req, res) => {
           name: 1,
           email: 1,
           phone: 1,
-          photoUrl: {
-            $ifNull: ['$profile.photoUrl', '']
-          },
+          photoUrl: { $ifNull: ['$profile.photoUrl', ''] },
           createdAt: 1,
           profile: {
             companyName: 1,
@@ -414,25 +341,17 @@ const getAllOwners = async (req, res) => {
       },
       { $sort: { createdAt: -1 } }
     ]);
-    
-    res.status(200).json({
-      success: true,
-      owners
-    });
+
+    res.status(200).json({ success: true, owners });
   } catch (err) {
     console.error('Get owners error:', err);
-    res.status(500).json({ 
-      error: "Server error", 
-      details: err.message 
-    });
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 };
 
-
+// Get verification stats
 const getVerificationStats = async (req, res) => {
   try {
-    const VerificationRequest = require('../models/VerificationRequest');
-    
     const [pending, approved, rejected] = await Promise.all([
       VerificationRequest.countDocuments({ status: 'pending' }),
       VerificationRequest.countDocuments({ status: 'approved' }),
@@ -447,6 +366,7 @@ const getVerificationStats = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 module.exports = {
   initialLogin,
   adminLogin,

@@ -10,7 +10,10 @@ connectDB();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+
+// Increase body size limits for JSON and URL-encoded payloads
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ limit: '20mb', extended: true }));
 
 // ✅ Proper static file serving configuration
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -92,10 +95,8 @@ app.use('/api/profile', require('./routes/profileRoutes'));
 app.use('/api/jobs', require('./routes/jobRoutes'));
 app.use('/api/likes', require('./routes/likeRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
-app.use('/api/uploads', require('./routes/uploadRoutes')); // Make sure this is added
 app.use('/api/admin', adminRoutes);
-const verificationRoutes = require('./routes/verificationRoutes'); // ✅ Import happens AFTER usage
-app.use('/api/verification', require('./routes/verificationRoutes'));
-
+const verificationRoutes = require('./routes/verificationRoutes');
+app.use('/api/verification', verificationRoutes);
 
 module.exports = app;

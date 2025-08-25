@@ -1,312 +1,127 @@
 const DriverProfile = require('../models/DriverProfile');
 const OwnerProfile = require('../models/OwnerProfile');
 const JobPost = require('../models/JobPost');
-const User = require('../models/User'); // Add this import for user updates
-const path = require('path');
-const fs = require('fs');
+const User = require('../models/User');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('../config/cloudinary');
+const multer = require('multer');
 
-// ✅ Helper function to generate proper photo URLs
-const generatePhotoUrl = (filename) => {
-  const baseUrl = process.env.BASE_URL || 'http://192.168.255.244:5000'; // Use your IP
-  return `${baseUrl}/uploads/${filename}`;
-};
+// Cloudinary storage configurations
+const driverProfileStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'truckmate/drivers/profiles',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'gif'],
+    transformation: [
+      { width: 800, height: 800, crop: 'limit' },
+      { quality: 'auto' }
+    ],
+  },
+});
 
-// ✅ NEW: Update user basic info (name, phone)
-const updateUserInfo = async (req, res) => {
+const driverLicenseStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'truckmate/drivers/licenses',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'gif'],
+    transformation: [
+      { width: 1200, height: 800, crop: 'limit' },
+      { quality: 'auto' }
+    ],
+  },
+});
+
+const ownerProfileStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'truckmate/owners/profiles',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'gif'],
+    transformation: [
+      { width: 800, height: 800, crop: 'limit' },
+      { quality: 'auto' }
+    ],
+  },
+  filename: (req, file, cb) => {
+    // Generate unique filename
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'owner-profile-' + uniqueSuffix);
+  }
+});
+
+// Multer configurations
+const uploadDriverProfile = multer({ 
+  storage: driverProfileStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
+
+const uploadDriverLicense = multer({ 
+  storage: driverLicenseStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
+
+const uploadOwnerProfile = multer({ 
+  storage: ownerProfileStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
+
+// Combined multer for driver (profile + license)
+const uploadDriverFiles = multer({ storage: driverProfileStorage }).fields([
+  { name: 'profilePhoto', maxCount: 1 },
+  { name: 'licensePhoto', maxCount: 1 }
+]);
+
+// Helper function to delete image from Cloudinary
+const deleteCloudinaryImage = async (imageUrl) => {
   try {
-    console.log('📝 Updating user info for user:', req.userId);
-    console.log('Request body:', req.body);
+    if (!imageUrl) return;
     
-    const { name, phone } = req.body;
+    // Extract public_id from Cloudinary URL
+    const urlParts = imageUrl.split('/');
+    const publicIdWithExtension = urlParts[urlParts.length - 1];
+    const publicId = publicIdWithExtension.split('.')[0];
     
-    // Validate required fields
-    if (!name || !phone) {
-      return res.status(400).json({ 
-        error: "Name and phone are required" 
-      });
-    }
-
-    // Validate phone number format (basic validation)
-    const phoneRegex = /^[+]?[\d\s\-\(\)]{10,}$/;
-    if (!phoneRegex.test(phone.trim())) {
-      return res.status(400).json({ 
-        error: "Invalid phone number format" 
-      });
-    }
-
-    // Check if phone number already exists for another user
-    // Use googleId instead of _id since req.userId contains the googleId
-    const existingUser = await User.findOne({ 
-      phone: phone.trim(), 
-      googleId: { $ne: req.userId } // Changed from _id to googleId
-    });
+    // Get the folder name (second to last part of URL)
+    const folder = urlParts[urlParts.length - 2];
     
-    if (existingUser) {
-      return res.status(400).json({ 
-        error: "Phone number already in use by another user" 
-      });
-    }
-
-    // Update user info - use googleId instead of _id
-    const updatedUser = await User.findOneAndUpdate(
-      { googleId: req.userId }, // Changed from _id to googleId
-      { 
-        name: name.trim(),
-        phone: phone.trim()
-      },
-      { 
-        new: true, 
-        runValidators: true 
-      }
-    ).select('-password'); // Exclude password from response
-
-    if (!updatedUser) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    console.log('✅ User info updated successfully:', updatedUser.googleId);
-    res.status(200).json({
-      success: true,
-      message: "User information updated successfully",
-      user: updatedUser
-    });
-  } catch (err) {
-    console.error('❌ Error updating user info:', err);
+    const fullPublicId = `${folder}/${publicId}`;
     
-    // Handle specific validation errors
-    if (err.name === 'ValidationError') {
-      const errors = Object.values(err.errors).map(e => e.message);
-      return res.status(400).json({ 
-        error: "Validation failed", 
-        details: errors 
-      });
-    }
+    console.log('Deleting Cloudinary image:', fullPublicId);
     
-    res.status(500).json({ 
-      error: "Failed to update user information", 
-      details: err.message 
-    });
+    const result = await cloudinary.uploader.destroy(fullPublicId);
+    console.log('Cloudinary delete result:', result);
+    
+    return result;
+  } catch (error) {
+    console.error('Error deleting Cloudinary image:', error);
+    throw error;
   }
 };
 
-const createOwnerProfile = async (req, res) => {
-  try {
-    console.log('📤 Creating owner profile...');
-    console.log('Request body:', req.body);
-    console.log('Request file:', req.file);
-    console.log('User ID:', req.userId);
-
-    // Check if profile already exists
-    const existingProfile = await OwnerProfile.findOne({ userId: req.userId });
-    if (existingProfile) {
-      return res.status(400).json({ error: "Profile already exists" });
-    }
-
-    // Validate required fields
-    const { companyName, companyLocation, gender } = req.body;
-    
-    if (!companyName || !companyLocation || !gender) {
-      return res.status(400).json({ 
-        error: "Missing required fields", 
-        required: ["companyName", "companyLocation", "gender"] 
-      });
-    }
-
-    // Handle photo upload
-    let photoUrl = '';
-    if (req.file) {
-      photoUrl = generatePhotoUrl(req.file.filename);
-      console.log('📸 Photo uploaded:', photoUrl);
-    }
-
-    // Create profile
-    const profileData = {
-      userId: req.userId,
-      companyName: companyName.trim(),
-      companyLocation: companyLocation.trim(),
-      gender: gender.trim(),
-      photoUrl,
-      companyInfoCompleted: true
-    };
-
-    const profile = await OwnerProfile.create(profileData);
-    
-    console.log('✅ Profile created successfully:', profile._id);
-    
-    res.status(201).json({
-      success: true,
-      message: "Profile created successfully",
-      profile: profile
-    });
-  } catch (err) {
-    console.error('❌ Error creating owner profile:', err);
-    
-    // Clean up uploaded file if profile creation fails
-    if (req.file) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (unlinkError) {
-        console.error('Error cleaning up file:', unlinkError);
-      }
-    }
-    
-    res.status(500).json({ 
-      error: "Failed to create profile", 
-      details: err.message 
-    });
-  }
-};
-
-// ✅ Get owner profile
-const getOwnerProfile = async (req, res) => {
-  try {
-    console.log('📥 Fetching owner profile for user:', req.userId);
-    
-    const profile = await OwnerProfile.findOne({ userId: req.userId });
-    
-    if (!profile) {
-      return res.status(404).json({ error: "Profile not found" });
-    }
-
-    console.log('✅ Profile found:', profile._id);
-    res.status(200).json(profile);
-  } catch (err) {
-    console.error('❌ Error fetching owner profile:', err);
-    res.status(500).json({ error: "Server error", details: err.message });
-  }
-};
-
-// ✅ Update owner profile
-const updateOwnerProfile = async (req, res) => {
-  try {
-    console.log('📝 Updating owner profile for user:', req.userId);
-    
-    const { companyName, companyLocation, gender } = req.body;
-    
-    const updateData = {};
-    if (companyName) updateData.companyName = companyName.trim();
-    if (companyLocation) updateData.companyLocation = companyLocation.trim();
-    if (gender) updateData.gender = gender.trim();
-    
-    // Handle photo upload if provided
-    if (req.file) {
-      // Get old profile to delete old photo
-      const oldProfile = await OwnerProfile.findOne({ userId: req.userId });
-      if (oldProfile && oldProfile.photoUrl) {
-        const oldPhotoPath = path.join(__dirname, '../uploads', path.basename(oldProfile.photoUrl));
-        try {
-          if (fs.existsSync(oldPhotoPath)) {
-            fs.unlinkSync(oldPhotoPath);
-            console.log('🗑️ Old photo deleted:', oldPhotoPath);
-          }
-        } catch (deleteError) {
-          console.error('Error deleting old photo:', deleteError);
-        }
-      }
-      
-      updateData.photoUrl = generatePhotoUrl(req.file.filename);
-    }
-
-    const profile = await OwnerProfile.findOneAndUpdate(
-      { userId: req.userId },
-      updateData,
-      { new: true, runValidators: true }
-    );
-
-    if (!profile) {
-      return res.status(404).json({ error: "Profile not found" });
-    }
-
-    console.log('✅ Profile updated successfully:', profile._id);
-    res.status(200).json({
-      success: true,
-      message: "Profile updated successfully",
-      profile: profile
-    });
-  } catch (err) {
-    console.error('❌ Error updating owner profile:', err);
-    res.status(500).json({ error: "Server error", details: err.message });
-  }
-};
-
-// ✅ Get owner profile by ID (for other users to view)
-const getOwnerProfileById = async (req, res) => {
-  try {
-    console.log('📥 Fetching owner profile by ID:', req.params.ownerId);
-    
-    const profile = await OwnerProfile.findOne({ userId: req.params.ownerId }).lean().exec();
-    
-    if (!profile) {
-      return res.status(404).json({ error: "Profile not found" });
-    }
-
-    console.log('✅ Profile found:', profile._id);
-    res.status(200).json(profile);
-  } catch (err) {
-    console.error('❌ Error fetching owner profile by ID:', err);
-    res.status(500).json({ error: "Server error", details: err.message });
-  }
-};
-
-// ✅ Get jobs posted by owner
-const getOwnerJobs = async (req, res) => {
-  try {
-    console.log('📥 Fetching jobs for owner:', req.params.ownerId);
-    
-    const jobs = await JobPost.find({ ownerId: req.params.ownerId })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
-    
-    console.log(`✅ Found ${jobs.length} jobs for owner`);
-    res.status(200).json(jobs);
-  } catch (err) {
-    console.error('❌ Error fetching owner jobs:', err);
-    res.status(500).json({ error: "Server error", details: err.message });
-  }
-};
-
-// ✅ MODIFIED: Create driver profile with support for both license and profile photos
+// --- DRIVER PROFILE FUNCTIONS ---
 const createDriverProfile = async (req, res) => {
   try {
-    console.log('📤 Creating driver profile for user:', req.userId);
-    console.log('Request body:', req.body);
-    console.log('Request files:', req.files);
-
-    // Check if profile already exists
-    const existingProfile = await DriverProfile.findOne({ userId: req.userId });
-    if (existingProfile) {
-      return res.status(400).json({ error: "Profile already exists" });
-    }
-
-    // Validate required fields
-    const { experience, licenseType, gender, knownTruckTypes, licenseNumber, licenseExpiryDate, age, location } = req.body;
+    const { experience, gender, knownTruckTypes, licenseNumber, licenseExpiryDate, age, location } = req.body;
     
-    if (!experience || !licenseType || !gender || !knownTruckTypes || !licenseNumber || !licenseExpiryDate || !age || !location) {
-      return res.status(400).json({ 
-        error: "Missing required fields",
-        required: ["experience", "licenseType", "gender", "knownTruckTypes", "licenseNumber", "licenseExpiryDate", "age", "location"]
-      });
-    }
-
-    // Handle photo uploads
-    let licensePhotoUrl = '';
     let profilePhotoUrl = '';
+    let licensePhotoUrl = '';
     
-    // Process files based on fieldname
+    // Handle file uploads
     if (req.files) {
-      if (req.files.licensePhoto) {
-        licensePhotoUrl = generatePhotoUrl(req.files.licensePhoto[0].filename);
-        console.log('📸 License photo uploaded:', licensePhotoUrl);
+      if (req.files['profilePhoto']) {
+        profilePhotoUrl = req.files['profilePhoto'][0].path;
       }
-      
-      if (req.files.profilePhoto) {
-        profilePhotoUrl = generatePhotoUrl(req.files.profilePhoto[0].filename);
-        console.log('📸 Profile photo uploaded:', profilePhotoUrl);
+      if (req.files['licensePhoto']) {
+        licensePhotoUrl = req.files['licensePhoto'].path;
       }
     }
 
-    // Parse known truck types if it's a string
+    // Parse truck types if it's a string
     let parsedTruckTypes = knownTruckTypes;
     if (typeof knownTruckTypes === 'string') {
       try {
@@ -316,124 +131,46 @@ const createDriverProfile = async (req, res) => {
       }
     }
 
-    const profileData = {
+    const profile = await DriverProfile.create({
       userId: req.userId,
+      profilePhoto: profilePhotoUrl,
       licensePhoto: licensePhotoUrl,
-      profilePhoto: profilePhotoUrl, // ✅ NEW: Add profile photo URL
-      licenseType: licenseType.trim(),
-      licenseNumber: licenseNumber.trim(),
-      licenseExpiryDate: new Date(licenseExpiryDate),
-      knownTruckTypes: Array.isArray(parsedTruckTypes) ? parsedTruckTypes : [parsedTruckTypes],
-      experience: experience.trim(),
-      gender: gender.trim(),
-      age: parseInt(age),
-      location: location.trim(),
+      licenseNumber,
+      licenseExpiryDate,
+      knownTruckTypes: parsedTruckTypes,
+      experience,
+      gender,
+      age,
+      location,
       profileCompleted: true
-    };
+    });
 
-    const profile = await DriverProfile.create(profileData);
-    
-    console.log('✅ Driver profile created successfully:', profile._id);
-    res.status(201).json({
-      success: true,
-      message: "Driver profile created successfully",
-      profile: profile
-    });
+    res.status(201).json({ success: true, profile });
   } catch (err) {
-    console.error('❌ Error creating driver profile:', err);
-    
-    // Clean up uploaded files if profile creation fails
-    if (req.files) {
-      Object.values(req.files).forEach(fileArray => {
-        fileArray.forEach(file => {
-          try {
-            fs.unlinkSync(file.path);
-          } catch (unlinkError) {
-            console.error('Error cleaning up file:', unlinkError);
-          }
-        });
-      });
-    }
-    
-    res.status(500).json({ 
-      error: "Failed to create driver profile", 
-      details: err.message 
-    });
+    res.status(500).json({ error: err.message });
   }
 };
 
-// ✅ Get driver profile
-const getDriverProfile = async (req, res) => {
-  try {
-    console.log('📥 Fetching driver profile for user:', req.userId);
-    
-    const profile = await DriverProfile.findOne({ userId: req.userId });
-    
-    if (!profile) {
-      return res.status(404).json({ error: "Profile not found" });
-    }
-
-    console.log('✅ Driver profile found:', profile._id);
-    res.status(200).json(profile);
-  } catch (err) {
-    console.error('❌ Error fetching driver profile:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
-  }
-};
-
-// ✅ MODIFIED: Update driver profile with support for both license and profile photos
 const updateDriverProfile = async (req, res) => {
   try {
-    console.log('📝 Updating driver profile for user:', req.userId);
-    console.log('Request body:', req.body);
-    console.log('Request files:', req.files);
-    
     const updateData = { ...req.body };
     
-    // Get old profile to potentially delete old photos
-    const oldProfile = await DriverProfile.findOne({ userId: req.userId });
-    if (!oldProfile) {
-      return res.status(404).json({ error: "Profile not found" });
-    }
-
-    // Handle photo uploads if provided
+    // Get current profile to access old image URLs
+    const currentProfile = await DriverProfile.findOne({ userId: req.userId });
+    
+    // Handle file uploads and delete old images
     if (req.files) {
-      // Handle license photo update
-      if (req.files.licensePhoto) {
-        // Delete old license photo if it exists
-        if (oldProfile.licensePhoto) {
-          const oldLicensePhotoPath = path.join(__dirname, '../uploads', path.basename(oldProfile.licensePhoto));
-          try {
-            if (fs.existsSync(oldLicensePhotoPath)) {
-              fs.unlinkSync(oldLicensePhotoPath);
-              console.log('🗑️ Old license photo deleted:', oldLicensePhotoPath);
-            }
-          } catch (deleteError) {
-            console.error('Error deleting old license photo:', deleteError);
-          }
+      if (req.files['profilePhoto']) {
+        if (currentProfile.profilePhoto) {
+          await deleteCloudinaryImage(currentProfile.profilePhoto);
         }
-        
-        updateData.licensePhoto = generatePhotoUrl(req.files.licensePhoto[0].filename);
-        console.log('📸 New license photo uploaded:', updateData.licensePhoto);
+        updateData.profilePhoto = req.files['profilePhoto'][0].path;
       }
-      
-      // Handle profile photo update
-      if (req.files.profilePhoto) {
-        // Delete old profile photo if it exists
-        if (oldProfile.profilePhoto) {
-          const oldProfilePhotoPath = path.join(__dirname, '../uploads', path.basename(oldProfile.profilePhoto));
-          try {
-            if (fs.existsSync(oldProfilePhotoPath)) {
-              fs.unlinkSync(oldProfilePhotoPath);
-              console.log('🗑️ Old profile photo deleted:', oldProfilePhotoPath);
-            }
-          } catch (deleteError) {
-            console.error('Error deleting old profile photo:', deleteError);
-          }
+      if (req.files['licensePhoto']) {
+        if (currentProfile.licensePhoto) {
+          await deleteCloudinaryImage(currentProfile.licensePhoto);
         }
-        
-        updateData.profilePhoto = generatePhotoUrl(req.files.profilePhoto[0].filename);
-        console.log('📸 New profile photo uploaded:', updateData.profilePhoto);
+        updateData.licensePhoto = req.files['licensePhoto'].path;
       }
     }
 
@@ -452,23 +189,140 @@ const updateDriverProfile = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    console.log('✅ Driver profile updated successfully:', profile._id);
+    if (!profile) {
+      return res.status(404).json({ error: "Profile not found" });
+    }
+
     res.status(200).json({
       success: true,
       message: "Driver profile updated successfully",
       profile: profile
     });
   } catch (err) {
-    console.error('❌ Error updating driver profile:', err);
     res.status(500).json({ error: 'Server error', details: err.message });
   }
 };
 
-// ✅ MODIFIED: Delete profile photo with support for both license and profile photos
+// --- OWNER PROFILE FUNCTIONS ---
+const createOwnerProfile = async (req, res) => {
+  try {
+    const { companyName, companyLocation, gender } = req.body;
+    const photoUrl = req.file ? req.file.path : '';
+
+    const profile = await OwnerProfile.create({
+      userId: req.userId,
+      companyName,
+      companyLocation,
+      gender,
+      photoUrl,
+      companyInfoCompleted: true
+    });
+
+    res.status(201).json({ success: true, profile });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const updateOwnerProfile = async (req, res) => {
+  try {
+    const { companyName, companyLocation, gender } = req.body;
+    const updateData = {};
+
+    if (companyName) updateData.companyName = companyName.trim();
+    if (companyLocation) updateData.companyLocation = companyLocation.trim();
+    if (gender) updateData.gender = gender.trim();
+
+    // Get current profile to access old image URL
+    const currentProfile = await OwnerProfile.findOne({ userId: req.userId });
+
+    // Handle file upload and delete old image
+    if (req.file) {
+      console.log('File uploaded:', req.file); // Debug log
+      
+      if (currentProfile && currentProfile.photoUrl) {
+        await deleteCloudinaryImage(currentProfile.photoUrl);
+      }
+      
+      // Use the secure_url from Cloudinary response
+      updateData.photoUrl = req.file.path; // This should be the Cloudinary URL
+    }
+
+    const profile = await OwnerProfile.findOneAndUpdate(
+      { userId: req.userId },
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    if (!profile) {
+      return res.status(404).json({ error: "Profile not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      profile: profile // Return the updated profile
+    });
+  } catch (err) {
+    console.error('Update owner profile error:', err);
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+};
+
+// --- EXISTING FUNCTIONS (keep these as they are) ---
+const getDriverProfile = async (req, res) => {
+  try {
+    const profile = await DriverProfile.findOne({ userId: req.userId });
+    if (!profile) {
+      return res.status(404).json({ error: "Profile not found" });
+    }
+    res.status(200).json(profile);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error', details: err.message });
+  }
+};
+
+const getOwnerProfile = async (req, res) => {
+  try {
+    const profile = await OwnerProfile.findOne({ userId: req.userId });
+    if (!profile) {
+      return res.status(404).json({ error: "Profile not found" });
+    }
+    res.status(200).json(profile);
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+}; 
+const getOwnerProfileById = async (req, res) => {
+  try {
+    const profile = await OwnerProfile.findOne({ userId: req.params.ownerId }).lean().exec();
+    if (!profile) {
+      return res.status(404).json({ error: "Profile not found" });
+    }
+    res.status(200).json(profile);
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+};
+
+
+const getOwnerJobs = async (req, res) => {
+  try {
+    const jobs = await JobPost.find({ ownerId: req.params.ownerId })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+    res.status(200).json(jobs);
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+};
+
+// --- PHOTO/UTILITY FUNCTIONS ---
+
 const deleteProfilePhoto = async (req, res) => {
   try {
     const { userType, photoType } = req.body; // 'owner' or 'driver', 'license' or 'profile'
-    
     let ProfileModel;
     if (userType === 'owner') {
       ProfileModel = OwnerProfile;
@@ -479,7 +333,6 @@ const deleteProfilePhoto = async (req, res) => {
     }
 
     const profile = await ProfileModel.findOne({ userId: req.userId });
-    
     if (!profile) {
       return res.status(404).json({ error: "Profile not found" });
     }
@@ -502,34 +355,21 @@ const deleteProfilePhoto = async (req, res) => {
       updateField = 'photoUrl';
     }
 
-    if (photoUrl) {
-      const photoPath = path.join(__dirname, '../uploads', path.basename(photoUrl));
-      try {
-        if (fs.existsSync(photoPath)) {
-          fs.unlinkSync(photoPath);
-          console.log('🗑️ Photo deleted:', photoPath);
-        }
-      } catch (deleteError) {
-        console.error('Error deleting photo:', deleteError);
-      }
-    }
+    // Optionally: Delete from Cloudinary here if you want
 
     // Remove photo URL from profile
     const updateData = {};
     updateData[updateField] = '';
-    
     await ProfileModel.findOneAndUpdate(
       { userId: req.userId },
       updateData,
       { new: true }
     );
-
     res.status(200).json({
       success: true,
       message: "Profile photo deleted successfully"
     });
   } catch (err) {
-    console.error('❌ Error deleting profile photo:', err);
     res.status(500).json({ error: 'Server error', details: err.message });
   }
 };
@@ -538,12 +378,10 @@ const testImageAccess = async (req, res) => {
   try {
     const { filename } = req.params;
     const imagePath = path.join(__dirname, '../uploads', filename);
-    
     if (fs.existsSync(imagePath)) {
       res.json({
         success: true,
         message: "Image found",
-        url: generatePhotoUrl(filename),
         path: imagePath
       });
     } else {
@@ -558,44 +396,107 @@ const testImageAccess = async (req, res) => {
   }
 };
 
-// ✅ Check if profile is completed
+const updateUserInfo = async (req, res) => {
+  try {
+    const { name, phone } = req.body;
+    if (!name || !phone) {
+      return res.status(400).json({ error: "Name and phone are required" });
+    }
+
+    const phoneRegex = /^[+]?[\d\s\-\(\)]{10,}$/;
+    if (!phoneRegex.test(phone.trim())) {
+      return res.status(400).json({ error: "Invalid phone number format" });
+    }
+
+    const existingUser = await User.findOne({
+      phone: phone.trim(),
+      googleId: { $ne: req.userId }
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ error: "Phone number already in use by another user" });
+    }
+
+    const updatedUser = await User.findOneAndUpdate(
+      { googleId: req.userId },
+      {
+        name: name.trim(),
+        phone: phone.trim()
+      },
+      { new: true, runValidators: true }
+    ).select('-password');
+    if (!updatedUser) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.status(200).json({
+      success: true,
+      message: "User information updated successfully",
+      user: updatedUser
+    });
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      const errors = Object.values(err.errors).map(e => e.message);
+      return res.status(400).json({
+        error: "Validation failed",
+        details: errors
+      });
+    }
+    res.status(500).json({
+      error: "Failed to update user information",
+      details: err.message
+    });
+  }
+};
+
 const checkProfileCompletion = async (req, res) => {
   try {
     const profile = await DriverProfile.findOne({ userId: req.userId });
-    
     if (!profile) {
-      return res.status(200).json({ 
+      return res.status(200).json({
         completed: false,
-        message: "Profile not created yet" 
+        message: "Profile not created yet"
       });
     }
-    
-    res.status(200).json({ 
+    res.status(200).json({
       completed: profile.profileCompleted,
       profile: profile
     });
   } catch (err) {
-    console.error('❌ Error checking profile completion:', err);
     res.status(500).json({ error: 'Server error', details: err.message });
   }
 };
+
+const updateAvailability = async (req, res) => {
+  try {
+    const { isAvailable } = req.body;
+    const updatedUser = await User.findOneAndUpdate(
+      { googleId: req.userId },
+      { isAvailable },
+      { new: true }
+    );
+    if (!updatedUser) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.status(200).json({
+      success: true,
+      isAvailable: updatedUser.isAvailable
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update availability" });
+  }
+};
+
 const getAvailableDrivers = async (req, res) => {
   try {
-    console.log('📥 Fetching available drivers');
     const { location, truckType } = req.query;
-
-    // Build match conditions
     const matchConditions = {
       role: 'driver',
       isAvailable: true
     };
-
-    // Add location filter if provided
     if (location) {
       matchConditions['profile.location'] = new RegExp(location, 'i');
     }
 
-    // Add truck type filter if provided
     let truckTypeFilter = {};
     if (truckType) {
       truckTypeFilter = {
@@ -603,7 +504,6 @@ const getAvailableDrivers = async (req, res) => {
       };
     }
 
-    // Find users who are drivers and available
     const availableDrivers = await User.aggregate([
       {
         $match: {
@@ -646,35 +546,9 @@ const getAvailableDrivers = async (req, res) => {
         }
       }
     ]);
-
-    console.log(`✅ Found ${availableDrivers.length} available drivers`);
     res.status(200).json({ drivers: availableDrivers });
   } catch (err) {
-    console.error('❌ Error fetching available drivers:', err);
     res.status(500).json({ error: 'Server error', details: err.message });
-  }
-};
-const updateAvailability = async (req, res) => {
-  try {
-    const { isAvailable } = req.body;
-    
-    const updatedUser = await User.findOneAndUpdate(
-      { googleId: req.userId },
-      { isAvailable },
-      { new: true }
-    );
-
-    if (!updatedUser) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    res.status(200).json({
-      success: true,
-      isAvailable: updatedUser.isAvailable
-    });
-  } catch (err) {
-    console.error('Error updating availability:', err);
-    res.status(500).json({ error: "Failed to update availability" });
   }
 };
 
@@ -692,6 +566,9 @@ module.exports = {
   updateUserInfo,
   checkProfileCompletion,
   updateAvailability,
-
-  getAvailableDrivers
+  getAvailableDrivers,
+  uploadDriverProfile,
+  uploadDriverLicense,
+  uploadOwnerProfile,
+  uploadDriverFiles,
 };

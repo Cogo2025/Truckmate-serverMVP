@@ -2,9 +2,8 @@ const mongoose = require('mongoose');
 
 const driverProfileSchema = new mongoose.Schema({
   userId: { type: String, required: true, unique: true },
-  licensePhoto: String,
-  profilePhoto: String,
-  licenseType: String,
+  profilePhoto: String, // Cloudinary URL
+  licensePhoto: String, // Cloudinary URL
   licenseNumber: String,
   licenseExpiryDate: Date,
   knownTruckTypes: [String],
@@ -13,12 +12,10 @@ const driverProfileSchema = new mongoose.Schema({
   age: Number,
   location: String,
   profileCompleted: { type: Boolean, default: false },
-  
-  // ✅ ADD: Verification fields
-  verificationStatus: { 
-    type: String, 
-    enum: ['pending', 'approved', 'rejected'], 
-    default: 'pending' 
+  verificationStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
   },
   verificationRequestedAt: Date,
   approvedBy: String,

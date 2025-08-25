@@ -1,3 +1,4 @@
+// JobPost.js - Update to use Cloudinary URLs
 const mongoose = require('mongoose');
 
 const jobSchema = new mongoose.Schema({
@@ -18,7 +19,7 @@ const jobSchema = new mongoose.Schema({
           if (this.truckType === "Body Vehicle") {
             return ["6 wheels", "8 wheels", "12 wheels", "14 wheels", "16 wheels"].includes(value);
           }
-          return true; // No validation for other truck types
+          return true;
         },
         message: props => `Invalid wheels type for Body Vehicle`
       }
@@ -34,24 +35,7 @@ const jobSchema = new mongoose.Schema({
   },
   description: String,
   phone: String,
-  lorryPhotos: {
-    type: [String],
-    default: [],
-    validate: {
-      validator: function(arr) {
-        // Validate each URL in the array
-        return arr.every(url => {
-          try {
-            new URL(url);
-            return true;
-          } catch (e) {
-            return false;
-          }
-        });
-      },
-      message: props => `${props.value} contains invalid URLs`
-    }
-  },
+  lorryPhotos: [String], // Cloudinary URLs
   ownerId: { type: String, ref: 'User' }
 }, { timestamps: true });
 

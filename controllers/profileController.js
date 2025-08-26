@@ -44,11 +44,26 @@ const ownerProfileStorage = new CloudinaryStorage({
 });
 
 // Multer configurations (Driver: Profile + License [front/back])
-const uploadDriverFiles = multer({ storage: driverProfileStorage }).fields([
-  { name: 'profilePhoto', maxCount: 1 },
-  { name: 'licensePhotoFront', maxCount: 1 }, // NEW
-  { name: 'licensePhotoBack', maxCount: 1 }   // NEW
-]);
+// Multer configurations with custom storage per field
+const uploadDriverFiles = (req, res, next) => {
+  // Handle profile photo with profile storage
+  const profileUpload = multer({ storage: driverProfileStorage }).single('profilePhoto');
+  
+  // Handle license photos with license storage  
+  const licenseUpload = multer({ storage: driverLicenseStorage }).fields([
+    { name: 'licensePhotoFront', maxCount: 1 },
+    { name: 'licensePhotoBack', maxCount: 1 }
+  ]);
+  
+  profileUpload(req, res, (err) => {
+    if (err) return next(err);
+    
+    licenseUpload(req, res, (err) => {
+      if (err) return next(err);
+      next();
+    });
+  });
+};
 
 const uploadOwnerProfile = multer({
   storage: ownerProfileStorage,

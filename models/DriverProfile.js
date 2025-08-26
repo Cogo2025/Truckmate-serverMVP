@@ -2,6 +2,7 @@
 const mongoose = require('mongoose');
 const driverProfileSchema = new mongoose.Schema({
   userId: { type: String, required: true, unique: true },
+  name: { type: String }, 
   profilePhoto: String, // Cloudinary URL
   licensePhotoFront: String, // NEW: Front license photo URL
   licensePhotoBack: String,  // NEW: Back license photo URL

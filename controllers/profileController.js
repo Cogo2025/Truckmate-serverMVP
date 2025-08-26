@@ -86,7 +86,7 @@ const createDriverProfile = async (req, res) => {
     console.log("📩 Body:", req.body);
     console.log("📂 Files:", req.files);
 
-    const { experience, gender, knownTruckTypes, licenseNumber, licenseExpiryDate, age, location } = req.body;
+    const {name, experience, gender, knownTruckTypes, licenseNumber, licenseExpiryDate, age, location } = req.body;
 
     // File paths
     let profilePhotoUrl = req.files?.profilePhoto ? req.files.profilePhoto[0].path : '';
@@ -109,6 +109,7 @@ const createDriverProfile = async (req, res) => {
     if (profile) {
       console.log("🔄 Updating existing driver profile");
       profile.set({
+        name,
         profilePhoto: profilePhotoUrl,
         licensePhotoFront: licensePhotoFrontUrl,
         licensePhotoBack: licensePhotoBackUrl,
@@ -126,6 +127,7 @@ const createDriverProfile = async (req, res) => {
       console.log("🆕 Creating new driver profile");
       profile = await DriverProfile.create({
         userId: req.userId,
+        name,
         profilePhoto: profilePhotoUrl,
         licensePhotoFront: licensePhotoFrontUrl,
         licensePhotoBack: licensePhotoBackUrl,

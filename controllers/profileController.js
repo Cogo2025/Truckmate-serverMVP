@@ -47,12 +47,13 @@ const ownerProfileStorage = new CloudinaryStorage({
 // Multer configurations with custom storage per field
 const uploadDriverFiles = multer({
   storage: driverLicenseStorage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max per file
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
 }).fields([
   { name: 'profilePhoto', maxCount: 1 },
   { name: 'licensePhotoFront', maxCount: 1 },
   { name: 'licensePhotoBack', maxCount: 1 }
 ]);
+
 
 
 const uploadOwnerProfile = multer({
@@ -80,61 +81,41 @@ const deleteCloudinaryImage = async (imageUrl) => {
 // Create driver profile (supports dual license photos)
 const createDriverProfile = async (req, res) => {
   try {
-    console.log("🔄 createDriverProfile called");
-    console.log("📁 Files received:", req.files);
-    console.log("📝 Body received:", req.body);
-    console.log("👤 User ID:", req.userId);
+    console.log("📌 Incoming Driver Profile Request");
+    console.log("BODY:", req.body);
+    console.log("FILES:", req.files);
 
     const { experience, gender, knownTruckTypes, licenseNumber, licenseExpiryDate, age, location } = req.body;
-    
-    // Validate required fields
-    if (!licenseNumber || !experience || !age || !location) {
-      console.log("❌ Missing required fields");
-      return res.status(400).json({ 
-        error: "Missing required fields: licenseNumber, experience, age, location" 
-      });
-    }
 
     let profilePhotoUrl = '';
     let licensePhotoFrontUrl = '';
     let licensePhotoBackUrl = '';
-    
-    // Files from multer
+
+    // ✅ Check uploaded files
     if (req.files) {
-      console.log("📸 Processing files...");
-      if (req.files['profilePhoto'] && req.files['profilePhoto'][0]) {
+      if (req.files['profilePhoto']) {
         profilePhotoUrl = req.files['profilePhoto'][0].path;
-        console.log("✅ Profile photo uploaded:", profilePhotoUrl);
       }
-      if (req.files['licensePhotoFront'] && req.files['licensePhotoFront'][0]) {
+      if (req.files['licensePhotoFront']) {
         licensePhotoFrontUrl = req.files['licensePhotoFront'][0].path;
-        console.log("✅ Front license uploaded:", licensePhotoFrontUrl);
       }
-      if (req.files['licensePhotoBack'] && req.files['licensePhotoBack'][0]) {
+      if (req.files['licensePhotoBack']) {
         licensePhotoBackUrl = req.files['licensePhotoBack'][0].path;
-        console.log("✅ Back license uploaded:", licensePhotoBackUrl);
       }
     }
 
-    // Validate required files
-    if (!licensePhotoFrontUrl || !licensePhotoBackUrl) {
-      console.log("❌ Missing license photos");
-      return res.status(400).json({ 
-        error: "Both license photos (front and back) are required" 
-      });
-    }
-    
-    // Parse truck types
+    // ✅ Handle knownTruckTypes
     let parsedTruckTypes = knownTruckTypes;
     if (typeof knownTruckTypes === 'string') {
       try {
         parsedTruckTypes = JSON.parse(knownTruckTypes);
       } catch (e) {
-        parsedTruckTypes = [knownTruckTypes];
+        parsedTruckTypes = knownTruckTypes.split(',');
       }
     }
 
-    console.log("💾 Creating driver profile in database...");
+    console.log("📌 Saving Driver Profile...");
+
     const profile = await DriverProfile.create({
       userId: req.userId,
       profilePhoto: profilePhotoUrl,
@@ -150,15 +131,20 @@ const createDriverProfile = async (req, res) => {
       profileCompleted: true
     });
 
-    console.log("✅ Profile created successfully:", profile._id);
+    console.log("✅ Driver Profile Created:", profile);
+
     res.status(201).json({ success: true, profile });
-    
   } catch (err) {
-    console.error("💥 Error in createDriverProfile:", err.message);
-    console.error("💥 Stack trace:", err.stack);
-    res.status(500).json({ error: err.message });
+    console.error("❌ CREATE DRIVER PROFILE ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      error: err.message,
+      stack: err.stack
+    });
   }
 };
+
 
 // Update driver profile (dual photo support, old image removal)
 const updateDriverProfile = async (req, res) => {

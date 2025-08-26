@@ -54,12 +54,18 @@ const authMiddleware = async (req, res, next) => {
 
     // Role-based access control check
     if (req.requiredRole && user.role !== req.requiredRole) {
-      console.warn(`🚫 Role mismatch - Required: ${req.requiredRole}, Actual: ${user.role}`);
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'Insufficient permissions'
-      });
-    }
+  // Allow users with unassigned roles to create their first profile
+  if (user.role === 'unassigned' && req.method === 'POST') {
+    console.log(`ℹ️ Allowing unassigned user ${user.googleId} to create ${req.requiredRole} profile`);
+  } else {
+    console.warn(`🚫 Role mismatch - Required: ${req.requiredRole}, Actual: ${user.role}`);
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'Insufficient permissions'
+    });
+  }
+}
+
 
     next();
 

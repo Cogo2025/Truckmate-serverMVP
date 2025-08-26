@@ -81,30 +81,19 @@ const deleteCloudinaryImage = async (imageUrl) => {
 // Create driver profile (supports dual license photos)
 const createDriverProfile = async (req, res) => {
   try {
-    console.log("📌 Incoming Driver Profile Request");
-    console.log("BODY:", req.body);
-    console.log("FILES:", req.files);
+    console.log("📌 [CREATE] Incoming Driver Profile Request");
+    console.log("🔑 Authenticated UID:", req.userId);
+    console.log("📩 Body:", req.body);
+    console.log("📂 Files:", req.files);
 
     const { experience, gender, knownTruckTypes, licenseNumber, licenseExpiryDate, age, location } = req.body;
 
-    let profilePhotoUrl = '';
-    let licensePhotoFrontUrl = '';
-    let licensePhotoBackUrl = '';
+    // File paths
+    let profilePhotoUrl = req.files?.profilePhoto ? req.files.profilePhoto[0].path : '';
+    let licensePhotoFrontUrl = req.files?.licensePhotoFront ? req.files.licensePhotoFront[0].path : '';
+    let licensePhotoBackUrl = req.files?.licensePhotoBack ? req.files.licensePhotoBack[0].path : '';
 
-    // ✅ Check uploaded files
-    if (req.files) {
-      if (req.files['profilePhoto']) {
-        profilePhotoUrl = req.files['profilePhoto'][0].path;
-      }
-      if (req.files['licensePhotoFront']) {
-        licensePhotoFrontUrl = req.files['licensePhotoFront'][0].path;
-      }
-      if (req.files['licensePhotoBack']) {
-        licensePhotoBackUrl = req.files['licensePhotoBack'][0].path;
-      }
-    }
-
-    // ✅ Handle knownTruckTypes
+    // Parse truck types if JSON or CSV
     let parsedTruckTypes = knownTruckTypes;
     if (typeof knownTruckTypes === 'string') {
       try {
@@ -114,33 +103,52 @@ const createDriverProfile = async (req, res) => {
       }
     }
 
-    console.log("📌 Saving Driver Profile...");
+    // Check if profile already exists → Update instead of creating duplicate
+    let profile = await DriverProfile.findOne({ userId: req.userId });
 
-    const profile = await DriverProfile.create({
-      userId: req.userId,
-      profilePhoto: profilePhotoUrl,
-      licensePhotoFront: licensePhotoFrontUrl,
-      licensePhotoBack: licensePhotoBackUrl,
-      licenseNumber,
-      licenseExpiryDate,
-      knownTruckTypes: parsedTruckTypes,
-      experience,
-      gender,
-      age,
-      location,
-      profileCompleted: true
-    });
+    if (profile) {
+      console.log("🔄 Updating existing driver profile");
+      profile.set({
+        profilePhoto: profilePhotoUrl,
+        licensePhotoFront: licensePhotoFrontUrl,
+        licensePhotoBack: licensePhotoBackUrl,
+        licenseNumber,
+        licenseExpiryDate,
+        knownTruckTypes: parsedTruckTypes,
+        experience,
+        gender,
+        age,
+        location,
+        profileCompleted: true
+      });
+      await profile.save();
+    } else {
+      console.log("🆕 Creating new driver profile");
+      profile = await DriverProfile.create({
+        userId: req.userId,
+        profilePhoto: profilePhotoUrl,
+        licensePhotoFront: licensePhotoFrontUrl,
+        licensePhotoBack: licensePhotoBackUrl,
+        licenseNumber,
+        licenseExpiryDate,
+        knownTruckTypes: parsedTruckTypes,
+        experience,
+        gender,
+        age,
+        location,
+        profileCompleted: true
+      });
+    }
 
-    console.log("✅ Driver Profile Created:", profile);
+    console.log("✅ Driver Profile Saved:", profile);
 
     res.status(201).json({ success: true, profile });
   } catch (err) {
-    console.error("❌ CREATE DRIVER PROFILE ERROR:", err);
+    console.error("❌ [CREATE DRIVER PROFILE ERROR]:", err);
     res.status(500).json({
       success: false,
-      message: "Internal Server Error",
-      error: err.message,
-      stack: err.stack
+      message: "Failed to create profile",
+      error: err.message
     });
   }
 };
@@ -254,13 +262,29 @@ const updateOwnerProfile = async (req, res) => {
 
 const getDriverProfile = async (req, res) => {
   try {
+    console.log("📌 [FETCH] Driver Profile Request");
+    console.log("🔑 Authenticated UID:", req.userId);
+
     const profile = await DriverProfile.findOne({ userId: req.userId });
+
     if (!profile) {
-      return res.status(404).json({ error: "Profile not found" });
+      console.log("⚠️ No driver profile found for:", req.userId);
+      return res.status(404).json({
+        success: false,
+        message: "Profile not found. Please complete your profile setup."
+      });
     }
-    res.status(200).json(profile);
+
+    console.log("✅ Profile found:", profile);
+
+    res.status(200).json({ success: true, profile });
   } catch (err) {
-    res.status(500).json({ error: 'Server error', details: err.message });
+    console.error("❌ [FETCH DRIVER PROFILE ERROR]:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch profile",
+      error: err.message
+    });
   }
 };
 

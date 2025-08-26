@@ -90,23 +90,51 @@ const deleteCloudinaryImage = async (imageUrl) => {
 // Create driver profile (supports dual license photos)
 const createDriverProfile = async (req, res) => {
   try {
+    console.log("🔄 createDriverProfile called");
+    console.log("📁 Files received:", req.files);
+    console.log("📝 Body received:", req.body);
+    console.log("👤 User ID:", req.userId);
+
     const { experience, gender, knownTruckTypes, licenseNumber, licenseExpiryDate, age, location } = req.body;
+    
+    // Validate required fields
+    if (!licenseNumber || !experience || !age || !location) {
+      console.log("❌ Missing required fields");
+      return res.status(400).json({ 
+        error: "Missing required fields: licenseNumber, experience, age, location" 
+      });
+    }
+
     let profilePhotoUrl = '';
     let licensePhotoFrontUrl = '';
     let licensePhotoBackUrl = '';
+    
     // Files from multer
     if (req.files) {
-      if (req.files['profilePhoto']) {
+      console.log("📸 Processing files...");
+      if (req.files['profilePhoto'] && req.files['profilePhoto'][0]) {
         profilePhotoUrl = req.files['profilePhoto'][0].path;
+        console.log("✅ Profile photo uploaded:", profilePhotoUrl);
       }
-      if (req.files['licensePhotoFront']) {
+      if (req.files['licensePhotoFront'] && req.files['licensePhotoFront'][0]) {
         licensePhotoFrontUrl = req.files['licensePhotoFront'][0].path;
+        console.log("✅ Front license uploaded:", licensePhotoFrontUrl);
       }
-      if (req.files['licensePhotoBack']) {
+      if (req.files['licensePhotoBack'] && req.files['licensePhotoBack'][0]) {
         licensePhotoBackUrl = req.files['licensePhotoBack'][0].path;
+        console.log("✅ Back license uploaded:", licensePhotoBackUrl);
       }
     }
-    // Parse truck types if necessary
+
+    // Validate required files
+    if (!licensePhotoFrontUrl || !licensePhotoBackUrl) {
+      console.log("❌ Missing license photos");
+      return res.status(400).json({ 
+        error: "Both license photos (front and back) are required" 
+      });
+    }
+    
+    // Parse truck types
     let parsedTruckTypes = knownTruckTypes;
     if (typeof knownTruckTypes === 'string') {
       try {
@@ -115,11 +143,13 @@ const createDriverProfile = async (req, res) => {
         parsedTruckTypes = [knownTruckTypes];
       }
     }
+
+    console.log("💾 Creating driver profile in database...");
     const profile = await DriverProfile.create({
       userId: req.userId,
       profilePhoto: profilePhotoUrl,
-      licensePhotoFront: licensePhotoFrontUrl, // NEW
-      licensePhotoBack: licensePhotoBackUrl,   // NEW
+      licensePhotoFront: licensePhotoFrontUrl,
+      licensePhotoBack: licensePhotoBackUrl,
       licenseNumber,
       licenseExpiryDate,
       knownTruckTypes: parsedTruckTypes,
@@ -129,8 +159,13 @@ const createDriverProfile = async (req, res) => {
       location,
       profileCompleted: true
     });
+
+    console.log("✅ Profile created successfully:", profile._id);
     res.status(201).json({ success: true, profile });
+    
   } catch (err) {
+    console.error("💥 Error in createDriverProfile:", err.message);
+    console.error("💥 Stack trace:", err.stack);
     res.status(500).json({ error: err.message });
   }
 };

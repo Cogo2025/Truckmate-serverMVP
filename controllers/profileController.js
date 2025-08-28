@@ -266,9 +266,11 @@ const getDriverProfile = async (req, res) => {
   try {
     console.log("📌 [FETCH] Driver Profile Request");
     console.log("🔑 Authenticated UID:", req.userId);
-
+    
+    // Get both user and profile data
+    const user = await User.findOne({ googleId: req.userId });
     const profile = await DriverProfile.findOne({ userId: req.userId });
-
+    
     if (!profile) {
       console.log("⚠️ No driver profile found for:", req.userId);
       return res.status(404).json({
@@ -276,10 +278,20 @@ const getDriverProfile = async (req, res) => {
         message: "Profile not found. Please complete your profile setup."
       });
     }
-
-    console.log("✅ Profile found:", profile);
-
-    res.status(200).json({ success: true, profile });
+    
+    // Combine user and profile data
+    const profileWithUserData = {
+      ...profile.toObject(),
+      // Add user data to profile
+      userName: user?.name || 'Unknown',
+      userPhone: user?.phone || 'Not provided',
+      userEmail: user?.email || 'Not provided',
+      userPhotoUrl: user?.photoUrl || '',
+      isAvailable: user?.isAvailable || false
+    };
+    
+    console.log("✅ Profile found with user data:", profileWithUserData);
+    res.status(200).json({ success: true, profile: profileWithUserData });
   } catch (err) {
     console.error("❌ [FETCH DRIVER PROFILE ERROR]:", err);
     res.status(500).json({
@@ -289,7 +301,6 @@ const getDriverProfile = async (req, res) => {
     });
   }
 };
-
 const getOwnerProfile = async (req, res) => {
   try {
     const profile = await OwnerProfile.findOne({ userId: req.userId });
@@ -299,6 +310,52 @@ const getOwnerProfile = async (req, res) => {
     res.status(200).json(profile);
   } catch (err) {
     res.status(500).json({ error: "Server error", details: err.message });
+  }
+};
+// Add this function to your profileController.js
+const updateUserInfo = async (req, res) => {
+  try {
+    const { name, phone } = req.body;
+    
+    // Validate input
+    if (!name || !phone) {
+      return res.status(400).json({ 
+        error: "Name and phone are required" 
+      });
+    }
+
+    // Update user information
+    const updatedUser = await User.findOneAndUpdate(
+      { googleId: req.userId },
+      { 
+        name: name.trim(),
+        phone: phone.trim()
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ 
+        error: "User not found" 
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "User information updated successfully",
+      user: {
+        name: updatedUser.name,
+        phone: updatedUser.phone,
+        email: updatedUser.email
+      }
+    });
+
+  } catch (err) {
+    console.error("❌ [UPDATE USER INFO ERROR]:", err);
+    res.status(500).json({ 
+      error: "Server error", 
+      details: err.message 
+    });
   }
 };
 
@@ -477,5 +534,6 @@ module.exports = {
   updateAvailability,
   getAvailableDrivers,
   uploadOwnerProfile,
-  uploadDriverFiles
+  uploadDriverFiles,
+  updateUserInfo  
 };

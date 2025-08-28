@@ -5,6 +5,8 @@ const User = require('../models/User');
 // Create verification request after driver profile completion
 const createVerificationRequest = async (req, res) => {
   try {
+    console.log('📝 Creating verification request for:', req.userId);
+    
     const driverProfile = await DriverProfile.findOne({ userId: req.userId });
     if (!driverProfile) {
       return res.status(404).json({ error: "Driver profile not found" });
@@ -28,9 +30,9 @@ const createVerificationRequest = async (req, res) => {
       driverId: req.userId,
       profileId: driverProfile._id,
       documents: {
-        licensePhotoFront: driverProfile.licensePhotoFront,  // Updated field
-        licensePhotoBack: driverProfile.licensePhotoBack,    // Updated field
-        profilePhoto: driverProfile.profilePhoto
+        licensePhotoFront: driverProfile.licensePhotoFront || '',
+        licensePhotoBack: driverProfile.licensePhotoBack || '',
+        profilePhoto: driverProfile.profilePhoto || ''
       }
     });
 
@@ -39,6 +41,8 @@ const createVerificationRequest = async (req, res) => {
       verificationStatus: 'pending',
       verificationRequestedAt: new Date()
     });
+
+    console.log('✅ Verification request created:', verificationRequest._id);
 
     res.status(201).json({
       success: true,
@@ -54,6 +58,8 @@ const createVerificationRequest = async (req, res) => {
 // Get all pending verification requests (Admin only)
 const getPendingVerifications = async (req, res) => {
   try {
+    console.log('📥 Fetching pending verifications...');
+
     const requests = await VerificationRequest.aggregate([
       { $match: { status: 'pending' } },
       {
@@ -115,8 +121,17 @@ const processVerification = async (req, res) => {
 
     console.log(`📝 Processing verification: ${requestId} with action: ${action}`);
 
+    if (!requestId || !action) {
+      return res.status(400).json({ error: "Request ID and action are required" });
+    }
+
+    if (!['approved', 'rejected'].includes(action)) {
+      return res.status(400).json({ error: "Invalid action. Must be 'approved' or 'rejected'" });
+    }
+
     const request = await VerificationRequest.findById(requestId);
     if (!request) {
+      console.error('❌ Verification request not found:', requestId);
       return res.status(404).json({ error: "Verification request not found" });
     }
 
@@ -128,7 +143,7 @@ const processVerification = async (req, res) => {
     request.status = action;
     request.processedBy = req.adminId;
     request.processedAt = new Date();
-    request.notes = notes;
+    request.notes = notes || '';
     await request.save();
 
     // Update driver profile
@@ -136,23 +151,37 @@ const processVerification = async (req, res) => {
     if (action === 'approved') {
       updateData.approvedBy = req.adminId;
       updateData.approvedAt = new Date();
-      updateData.rejectionReason = undefined; // Clear any previous rejection reason
+      updateData.rejectionReason = undefined;
     } else if (action === 'rejected') {
       updateData.rejectionReason = notes || 'No specific reason provided';
       updateData.$inc = { resubmissionCount: 1 };
     }
 
-    await DriverProfile.findByIdAndUpdate(request.profileId, updateData);
+    const updatedProfile = await DriverProfile.findByIdAndUpdate(
+      request.profileId, 
+      updateData,
+      { new: true }
+    );
 
-    console.log(`✅ Driver ${action} successfully`);
+    if (!updatedProfile) {
+      console.error('❌ Driver profile not found:', request.profileId);
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    console.log(`✅ Driver ${action} successfully, profile updated:`, updatedProfile._id);
+    
     res.status(200).json({
       success: true,
       message: `Driver ${action} successfully`,
-      requestId: request._id
+      requestId: request._id,
+      profileId: updatedProfile._id
     });
   } catch (err) {
     console.error('❌ Process verification error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      error: "Failed to process verification",
+      details: err.message 
+    });
   }
 };
 
@@ -174,7 +203,7 @@ const getVerificationStats = async (req, res) => {
   }
 };
 
-// Get all verifications (Admin panel - this is what "view all" should call)
+// Get all verifications with enhanced error handling
 const getAllVerifications = async (req, res) => {
   try {
     console.log('📥 Fetching all verifications...');
@@ -187,7 +216,6 @@ const getAllVerifications = async (req, res) => {
     }
 
     const requests = await VerificationRequest.aggregate([
-      // Match all requests (no filter)
       {
         $lookup: {
           from: 'users',
@@ -260,7 +288,6 @@ const getDriverVerificationStatus = async (req, res) => {
   try {
     const driverId = req.userId;
     
-    // Check if driver profile exists
     const driverProfile = await DriverProfile.findOne({ userId: driverId });
     if (!driverProfile) {
       return res.status(404).json({
@@ -270,7 +297,6 @@ const getDriverVerificationStatus = async (req, res) => {
       });
     }
 
-    // Get latest verification request
     const latestRequest = await VerificationRequest.findOne({
       driverId: driverId
     }).sort({ createdAt: -1 });
@@ -327,18 +353,16 @@ const resubmitVerification = async (req, res) => {
       return res.status(400).json({ error: "Can only resubmit rejected verifications" });
     }
 
-    // Create new verification request
     const verificationRequest = await VerificationRequest.create({
       driverId: driverId,
       profileId: driverProfile._id,
       documents: {
-        licensePhotoFront: driverProfile.licensePhotoFront,
-        licensePhotoBack: driverProfile.licensePhotoBack,
-        profilePhoto: driverProfile.profilePhoto
+        licensePhotoFront: driverProfile.licensePhotoFront || '',
+        licensePhotoBack: driverProfile.licensePhotoBack || '',
+        profilePhoto: driverProfile.profilePhoto || ''
       }
     });
 
-    // Update driver profile
     await DriverProfile.findByIdAndUpdate(driverProfile._id, {
       verificationStatus: 'pending',
       verificationRequestedAt: new Date(),

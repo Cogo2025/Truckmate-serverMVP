@@ -75,8 +75,10 @@ const deleteCloudinaryImage = async (imageUrl) => {
 };
 
 // Helper function to auto-create verification request
-const autoCreateVerificationRequest = async (userId, profileId) => {
+const autoCreateVerificationRequest = async (userId, profile) => {
   try {
+    console.log('🔍 Checking for existing verification request for:', userId);
+    
     // Check if verification request already exists
     const existingRequest = await VerificationRequest.findOne({
       driverId: userId,
@@ -84,24 +86,20 @@ const autoCreateVerificationRequest = async (userId, profileId) => {
     });
 
     if (existingRequest) {
-      console.log("⚠️ Verification request already exists for:", userId);
+      console.log("⚠️ Verification request already exists:", existingRequest._id);
       return existingRequest;
     }
 
-    const driverProfile = await DriverProfile.findById(profileId);
-    if (!driverProfile) {
-      console.log("⚠️ Driver profile not found for verification");
-      return;
-    }
-
+    console.log('🆕 Creating new verification request for:', userId);
+    
     // Create verification request automatically
     const verificationRequest = await VerificationRequest.create({
       driverId: userId,
-      profileId: profileId,
+      profileId: profile._id,
       documents: {
-        licensePhotoFront: driverProfile.licensePhotoFront,
-        licensePhotoBack: driverProfile.licensePhotoBack,
-        profilePhoto: driverProfile.profilePhoto
+        licensePhotoFront: profile.licensePhotoFront || '',
+        licensePhotoBack: profile.licensePhotoBack || '',
+        profilePhoto: profile.profilePhoto || ''
       }
     });
 
@@ -109,6 +107,7 @@ const autoCreateVerificationRequest = async (userId, profileId) => {
     return verificationRequest;
   } catch (error) {
     console.error("❌ Error auto-creating verification request:", error);
+    throw error;
   }
 };
 
@@ -120,7 +119,15 @@ const createDriverProfile = async (req, res) => {
     console.log("📩 Body:", req.body);
     console.log("📂 Files:", req.files);
 
-    const {name, experience, gender, knownTruckTypes, licenseNumber, licenseExpiryDate, age, location } = req.body;
+    const { name, experience, gender, knownTruckTypes, licenseNumber, licenseExpiryDate, age, location } = req.body;
+
+    // Validate required fields
+    if (!name || !licenseNumber || !experience || !location) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: name, licenseNumber, experience, location"
+      });
+    }
 
     // File paths
     let profilePhotoUrl = req.files?.profilePhoto ? req.files.profilePhoto[0].path : '';
@@ -133,61 +140,90 @@ const createDriverProfile = async (req, res) => {
       try {
         parsedTruckTypes = JSON.parse(knownTruckTypes);
       } catch (e) {
-        parsedTruckTypes = knownTruckTypes.split(',');
+        parsedTruckTypes = knownTruckTypes.split(',').map(type => type.trim());
       }
     }
 
+    // Ensure parsedTruckTypes is an array
+    if (!Array.isArray(parsedTruckTypes)) {
+      parsedTruckTypes = [];
+    }
+
+    let profile;
+    let isUpdate = false;
+
     // Check if profile already exists → Update instead of creating duplicate
-    let profile = await DriverProfile.findOne({ userId: req.userId });
-    if (profile) {
+    const existingProfile = await DriverProfile.findOne({ userId: req.userId });
+    
+    if (existingProfile) {
       console.log("🔄 Updating existing driver profile");
-      profile.set({
-        name,
+      isUpdate = true;
+      
+      existingProfile.set({
+        name: name.trim(),
         profilePhoto: profilePhotoUrl,
         licensePhotoFront: licensePhotoFrontUrl,
         licensePhotoBack: licensePhotoBackUrl,
-        licenseNumber,
+        licenseNumber: licenseNumber.trim(),
         licenseExpiryDate,
         knownTruckTypes: parsedTruckTypes,
-        experience,
-        gender,
-        age,
-        location,
+        experience: experience.trim(),
+        gender: gender?.trim(),
+        age: parseInt(age) || 0,
+        location: location.trim(),
         profileCompleted: true,
-        verificationStatus: 'pending',  // Set to pending for verification
+        verificationStatus: 'pending',
         verificationRequestedAt: new Date()
       });
-      await profile.save();
+      
+      profile = await existingProfile.save();
     } else {
       console.log("🆕 Creating new driver profile");
+      
       profile = await DriverProfile.create({
         userId: req.userId,
-        name,
+        name: name.trim(),
         profilePhoto: profilePhotoUrl,
         licensePhotoFront: licensePhotoFrontUrl,
         licensePhotoBack: licensePhotoBackUrl,
-        licenseNumber,
+        licenseNumber: licenseNumber.trim(),
         licenseExpiryDate,
         knownTruckTypes: parsedTruckTypes,
-        experience,
-        gender,
-        age,
-        location,
+        experience: experience.trim(),
+        gender: gender?.trim(),
+        age: parseInt(age) || 0,
+        location: location.trim(),
         profileCompleted: true,
-        verificationStatus: 'pending',  // Set to pending for verification
+        verificationStatus: 'pending',
         verificationRequestedAt: new Date()
       });
     }
 
-    // Auto-create verification request
-    await autoCreateVerificationRequest(req.userId, profile._id);
+    console.log("✅ Driver Profile Saved:", profile._id);
 
-    console.log("✅ Driver Profile Saved:", profile);
+    // Auto-create verification request
+    try {
+      const verificationRequest = await autoCreateVerificationRequest(req.userId, profile);
+      console.log("✅ Verification request handled:", verificationRequest?._id);
+    } catch (verificationError) {
+      console.error("⚠️ Verification request creation failed:", verificationError);
+      // Don't fail the profile creation if verification request fails
+    }
+
     res.status(201).json({ 
       success: true, 
-      profile,
-      message: "Driver profile created and submitted for verification"
+      profile: {
+        ...profile.toObject(),
+        _id: profile._id,
+        userId: profile.userId,
+        profileCompleted: profile.profileCompleted,
+        verificationStatus: profile.verificationStatus
+      },
+      message: isUpdate ? 
+        "Driver profile updated and submitted for verification" : 
+        "Driver profile created and submitted for verification"
     });
+
   } catch (err) {
     console.error("❌ [CREATE DRIVER PROFILE ERROR]:", err);
     res.status(500).json({
@@ -201,6 +237,9 @@ const createDriverProfile = async (req, res) => {
 // Update driver profile (dual photo support, old image removal)
 const updateDriverProfile = async (req, res) => {
   try {
+    console.log("📌 [UPDATE] Driver Profile Request");
+    console.log("🔑 Authenticated UID:", req.userId);
+
     const updateData = { ...req.body };
     const currentProfile = await DriverProfile.findOne({ userId: req.userId });
 
@@ -237,7 +276,7 @@ const updateDriverProfile = async (req, res) => {
       try {
         updateData.knownTruckTypes = JSON.parse(updateData.knownTruckTypes);
       } catch (e) {
-        updateData.knownTruckTypes = [updateData.knownTruckTypes];
+        updateData.knownTruckTypes = updateData.knownTruckTypes.split(',').map(type => type.trim());
       }
     }
 
@@ -259,7 +298,12 @@ const updateDriverProfile = async (req, res) => {
 
     // Create new verification request if significant changes were made
     if (hasSignificantChanges) {
-      await autoCreateVerificationRequest(req.userId, profile._id);
+      try {
+        await autoCreateVerificationRequest(req.userId, profile);
+        console.log("✅ New verification request created for updated profile");
+      } catch (verificationError) {
+        console.error("⚠️ Failed to create verification request:", verificationError);
+      }
     }
 
     res.status(200).json({
@@ -269,12 +313,58 @@ const updateDriverProfile = async (req, res) => {
         "Driver profile updated successfully",
       profile: profile
     });
+
   } catch (err) {
+    console.error("❌ [UPDATE DRIVER PROFILE ERROR]:", err);
     res.status(500).json({ error: 'Server error', details: err.message });
   }
 };
 
-// Rest of the functions remain the same...
+// Get driver profile
+const getDriverProfile = async (req, res) => {
+  try {
+    console.log("📌 [FETCH] Driver Profile Request");
+    console.log("🔑 Authenticated UID:", req.userId);
+
+    // Get both user and profile data
+    const user = await User.findOne({ googleId: req.userId });
+    const profile = await DriverProfile.findOne({ userId: req.userId });
+
+    console.log("👤 User found:", !!user);
+    console.log("📋 Profile found:", !!profile);
+
+    if (!profile) {
+      console.log("⚠️ No driver profile found for:", req.userId);
+      return res.status(404).json({
+        success: false,
+        message: "Profile not found. Please complete your profile setup."
+      });
+    }
+
+    // Combine user and profile data
+    const profileWithUserData = {
+      ...profile.toObject(),
+      // Add user data to profile
+      userName: user?.name || 'Unknown',
+      userPhone: user?.phone || 'Not provided',
+      userEmail: user?.email || 'Not provided',
+      userPhotoUrl: user?.photoUrl || '',
+      isAvailable: user?.isAvailable || false
+    };
+
+    console.log("✅ Profile found with verification status:", profile.verificationStatus);
+    res.status(200).json({ success: true, profile: profileWithUserData });
+  } catch (err) {
+    console.error("❌ [FETCH DRIVER PROFILE ERROR]:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch profile",
+      error: err.message
+    });
+  }
+};
+
+// Rest of the functions remain the same as in your original file...
 const createOwnerProfile = async (req, res) => {
   try {
     const { companyName, companyLocation, gender } = req.body;
@@ -333,46 +423,6 @@ const updateOwnerProfile = async (req, res) => {
   }
 };
 
-const getDriverProfile = async (req, res) => {
-  try {
-    console.log("📌 [FETCH] Driver Profile Request");
-    console.log("🔑 Authenticated UID:", req.userId);
-
-    // Get both user and profile data
-    const user = await User.findOne({ googleId: req.userId });
-    const profile = await DriverProfile.findOne({ userId: req.userId });
-
-    if (!profile) {
-      console.log("⚠️ No driver profile found for:", req.userId);
-      return res.status(404).json({
-        success: false,
-        message: "Profile not found. Please complete your profile setup."
-      });
-    }
-
-    // Combine user and profile data
-    const profileWithUserData = {
-      ...profile.toObject(),
-      // Add user data to profile
-      userName: user?.name || 'Unknown',
-      userPhone: user?.phone || 'Not provided',
-      userEmail: user?.email || 'Not provided',
-      userPhotoUrl: user?.photoUrl || '',
-      isAvailable: user?.isAvailable || false
-    };
-
-    console.log("✅ Profile found with user data:", profileWithUserData);
-    res.status(200).json({ success: true, profile: profileWithUserData });
-  } catch (err) {
-    console.error("❌ [FETCH DRIVER PROFILE ERROR]:", err);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch profile",
-      error: err.message
-    });
-  }
-};
-
 const getOwnerProfile = async (req, res) => {
   try {
     const profile = await OwnerProfile.findOne({ userId: req.userId });
@@ -389,14 +439,12 @@ const updateUserInfo = async (req, res) => {
   try {
     const { name, phone } = req.body;
 
-    // Validate input
     if (!name || !phone) {
       return res.status(400).json({
         error: "Name and phone are required"
       });
     }
 
-    // Update user information
     const updatedUser = await User.findOneAndUpdate(
       { googleId: req.userId },
       {
@@ -485,12 +533,11 @@ const deleteProfilePhoto = async (req, res) => {
       } else {
         return res.status(400).json({ error: "Invalid photo type for driver" });
       }
-    } else { // owner
+    } else {
       photoUrl = profile.photoUrl;
       updateField = 'photoUrl';
     }
 
-    // Delete from Cloudinary
     if (photoUrl) await deleteCloudinaryImage(photoUrl);
 
     const updateData = {};

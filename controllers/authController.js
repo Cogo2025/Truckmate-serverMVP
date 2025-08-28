@@ -1,103 +1,91 @@
 const admin = require('../config/firebase');
-const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const DriverProfile = require('../models/DriverProfile');
-const OwnerProfile = require('../models/OwnerProfile');
 
-exports.googleLogin = async (req, res) => {
-  const { idToken, role, name, phone } = req.body;
-
+// FIXED: Google Login/Registration with proper duplicate prevention
+const googleLogin = async (req, res) => {
   try {
-    // 1. Verify the Google ID token with Firebase
+    const { idToken, name, phone, role } = req.body;
+
+    console.log('🔐 Google login attempt:', { name, phone, role });
+
+    if (!idToken || !name || !phone || !role) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: 'idToken, name, phone, and role are required'
+      });
+    }
+
+    // Verify Firebase token
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     const { uid, email, picture } = decodedToken;
 
-    // 2. Check if user exists in our database
-    let user = await User.findOne({ googleId: uid });
+    console.log('✅ Firebase token verified for UID:', uid);
 
-    if (!user) {
-      // 3. Handle new user registration
-      if (!role || role.trim() === "") {
-        // Case: New user but hasn't selected role yet
-        return res.status(200).json({
-          token: null,
-          user: {
-            new: true,
-            googleId: uid,
-            name: name || decodedToken.name,
-            email,
-            photoUrl: picture,
-            role: ""
-          }
-        });
+    // *** CRITICAL: Use findOneAndUpdate with upsert to prevent duplicates ***
+    const user = await User.findOneAndUpdate(
+      { googleId: uid },
+      {
+        $set: {
+          googleId: uid,
+          name: name.trim(),
+          email: email || '',
+          phone: phone.trim(),
+          photoUrl: picture || '',
+          role: role,
+          isActive: true,
+          registrationCompleted: true,
+          lastLogin: new Date()
+        }
+      },
+      {
+        upsert: true,        // Create if doesn't exist
+        new: true,           // Return updated document
+        runValidators: true  // Run schema validations
       }
+    );
 
-      // 4. Create new user with selected role
-      user = await User.create({
-        googleId: uid,
-        role,
-        name: name || decodedToken.name,
-        phone: phone || '',
-        email,
-        photoUrl: picture
-      });
+    console.log('👤 User created/updated:', user.googleId, 'Role:', user.role);
 
-      // 5. Create empty profile based on role
-      if (role === 'driver') {
-        await DriverProfile.create({
-          userId: user._id,
-          // Set default values
-          knownTruckTypes: [],
-          experience: '',
-          licensePhoto: ''
-        });
-      } else if (role === 'owner') {
-        await OwnerProfile.create({
-          userId: user._id,
-          companyName: 'unknown',
-          companyLocation: 'unknown',
-          gender: 'Not Specified', // ✅ Matches enum
-          photoUrl: '',
-          companyInfoCompleted: false
-        });
-      }
-    }
+    // *** CRITICAL: Do NOT create driver profile here - only create it during profile setup ***
+    // This was causing the empty profiles in your database
 
-    // 6. Generate JWT token for authentication
-    const token = jwt.sign({
-      userId: user._id,
-      role: user.role // Include role in the token
-    }, process.env.JWT_SECRET, { expiresIn: '3d' });
+    // Generate JWT token (if you're using JWT)
+    // const token = jwt.sign({ userId: user.googleId, role: user.role }, process.env.JWT_SECRET);
 
-    // 7. Get profile completion status
-    let profileCompleted = false;
-    if (user.role === 'driver') {
-      profileCompleted = await DriverProfile.exists({ userId: user._id });
-    } else if (user.role === 'owner') {
-      const ownerProfile = await OwnerProfile.findOne({ userId: user._id }).select('companyInfoCompleted');
-      profileCompleted = ownerProfile ? ownerProfile.companyInfoCompleted : false;
-    }
-
-    // 8. Return success response
     res.status(200).json({
-      token,
+      success: true,
       user: {
-        _id: user._id,
-        googleId: user.googleId,
-        role: user.role,
+        id: user.googleId,
         name: user.name,
-        phone: user.phone,
         email: user.email,
+        phone: user.phone,
         photoUrl: user.photoUrl,
-        profileCompleted: profileCompleted
-      }
+        role: user.role,
+        isActive: user.isActive,
+        registrationCompleted: user.registrationCompleted
+      },
+      message: 'Registration successful'
+      // token: token  // Include if using JWT
     });
 
   } catch (error) {
-    console.error("Google Login Error:", error);
+    console.error('❌ Google login error:', error);
+    
+    if (error.code && error.code.startsWith('auth/')) {
+      return res.status(401).json({
+        error: 'Invalid Firebase token',
+        details: error.message
+      });
+    }
+
     res.status(500).json({
-      error: 'Authentication failed',
+      error: 'Registration failed',
       details: error.message
     });
   }
+};
+
+module.exports = {
+  googleLogin
 };

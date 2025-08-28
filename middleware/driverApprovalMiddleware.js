@@ -1,10 +1,25 @@
-// middleware/driverApprovalMiddleware.js - Enhanced version
 const DriverProfile = require('../models/DriverProfile');
+const User = require('../models/User');
 
 const checkDriverApproval = async (req, res, next) => {
   try {
+    console.log('🔍 Checking driver approval for:', req.userId);
+
+    // Get user data first
+    const user = await User.findOne({ googleId: req.userId });
+    
+    if (!user) {
+      return res.status(403).json({
+        error: "User not found",
+        code: "USER_NOT_FOUND",
+        message: "Please complete registration first",
+        redirectTo: "/register"
+      });
+    }
+
     // Skip check for non-driver users
-    if (req.user && req.user.role !== 'driver') {
+    if (user.role !== 'driver') {
+      console.log('✅ Non-driver user, skipping approval check');
       return next();
     }
 
@@ -57,11 +72,16 @@ const checkDriverApproval = async (req, res, next) => {
     }
 
     // All checks passed
+    console.log('✅ Driver approved:', req.userId);
     req.driverProfile = driverProfile;
     next();
+
   } catch (err) {
-    console.error('Driver approval check error:', err);
-    res.status(500).json({ error: "Server error during verification check" });
+    console.error('❌ Driver approval check error:', err);
+    res.status(500).json({ 
+      error: "Server error during verification check",
+      details: err.message 
+    });
   }
 };
 

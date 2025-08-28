@@ -462,18 +462,55 @@ const getDriverProfile = async (req, res) => {
     console.log("📌 [FETCH] Driver Profile Request");
     console.log("🔑 Authenticated UID:", req.userId);
 
-    // Get both user and profile data
+    // Always get user data first
     const user = await User.findOne({ googleId: req.userId });
-    const profile = await DriverProfile.findOne({ userId: req.userId });
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found. Please register first."
+      });
+    }
 
-    console.log("👤 User found:", !!user);
+    console.log("👤 User found:", user.name, user.role);
+
+    // Try to get profile data
+    const profile = await DriverProfile.findOne({ userId: req.userId });
+    
     console.log("📋 Profile found:", !!profile);
 
     if (!profile) {
-      console.log("⚠️ No driver profile found for:", req.userId);
-      return res.status(404).json({
-        success: false,
-        message: "Profile not found. Please complete your profile setup."
+      // *** CRITICAL: Return user data with N/A placeholders if no profile exists ***
+      console.log("⚠️ No driver profile found, returning user data with placeholders");
+      
+      return res.status(200).json({
+        success: true,
+        profile: {
+          // User registered data
+          userName: user.name,
+          userPhone: user.phone,
+          userEmail: user.email,
+          userPhotoUrl: user.photoUrl || '',
+          isAvailable: user.isAvailable || false,
+          
+          // Profile placeholders
+          name: user.name,
+          gender: 'N/A',
+          age: 'N/A',
+          location: 'N/A',
+          experience: 'N/A',
+          licenseNumber: 'N/A',
+          licenseExpiryDate: null,
+          knownTruckTypes: [],
+          profilePhoto: '',
+          licensePhotoFront: '',
+          licensePhotoBack: '',
+          
+          // Status
+          profileCompleted: false,
+          verificationStatus: 'not_submitted'
+        },
+        message: "Please complete your profile setup"
       });
     }
 
@@ -481,15 +518,16 @@ const getDriverProfile = async (req, res) => {
     const profileWithUserData = {
       ...profile.toObject(),
       // Add user data to profile
-      userName: user?.name || 'Unknown',
-      userPhone: user?.phone || 'Not provided',
-      userEmail: user?.email || 'Not provided',
-      userPhotoUrl: user?.photoUrl || '',
-      isAvailable: user?.isAvailable || false
+      userName: user.name,
+      userPhone: user.phone,
+      userEmail: user.email,
+      userPhotoUrl: user.photoUrl || '',
+      isAvailable: user.isAvailable || false
     };
 
     console.log("✅ Profile found with verification status:", profile.verificationStatus);
     res.status(200).json({ success: true, profile: profileWithUserData });
+    
   } catch (err) {
     console.error("❌ [FETCH DRIVER PROFILE ERROR]:", err);
     res.status(500).json({

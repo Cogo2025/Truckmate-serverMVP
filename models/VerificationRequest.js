@@ -29,7 +29,8 @@ const verificationRequestSchema = new mongoose.Schema({
   processedAt: Date,
   notes: String,
   documents: {
-    licensePhoto: String,
+    licensePhotoFront: String,  // Updated from licensePhoto
+    licensePhotoBack: String,   // Added back license photo
     profilePhoto: String,
     additionalDocs: [String]
   }

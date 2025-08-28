@@ -5,6 +5,8 @@ const User = require('../models/User');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('../config/cloudinary');
 const multer = require('multer');
+const VerificationRequest = require('../models/VerificationRequest');
+
 
 // Cloudinary storage configurations
 const driverProfileStorage = new CloudinaryStorage({
@@ -18,6 +20,44 @@ const driverProfileStorage = new CloudinaryStorage({
     ],
   },
 });
+
+// Add this helper function at the top after other helpers
+const autoCreateVerificationRequest = async (userId, profileId) => {
+  try {
+    // Check if verification request already exists
+    const existingRequest = await VerificationRequest.findOne({
+      driverId: userId,
+      status: 'pending'
+    });
+
+    if (existingRequest) {
+      console.log("⚠️ Verification request already exists for:", userId);
+      return;
+    }
+
+    const driverProfile = await DriverProfile.findById(profileId);
+    if (!driverProfile) {
+      console.log("⚠️ Driver profile not found for verification");
+      return;
+    }
+
+    // Create verification request automatically
+    const verificationRequest = await VerificationRequest.create({
+      driverId: userId,
+      profileId: profileId,
+      documents: {
+        licensePhotoFront: driverProfile.licensePhotoFront,
+        licensePhotoBack: driverProfile.licensePhotoBack,
+        profilePhoto: driverProfile.profilePhoto
+      }
+    });
+
+    console.log("✅ Auto-created verification request:", verificationRequest._id);
+    return verificationRequest;
+  } catch (error) {
+    console.error("❌ Error auto-creating verification request:", error);
+  }
+};
 
 const driverLicenseStorage = new CloudinaryStorage({
   cloudinary,
@@ -105,7 +145,6 @@ const createDriverProfile = async (req, res) => {
 
     // Check if profile already exists → Update instead of creating duplicate
     let profile = await DriverProfile.findOne({ userId: req.userId });
-
     if (profile) {
       console.log("🔄 Updating existing driver profile");
       profile.set({
@@ -120,7 +159,8 @@ const createDriverProfile = async (req, res) => {
         gender,
         age,
         location,
-        profileCompleted: true
+        profileCompleted: true,
+        verificationStatus: 'pending'  // Set to pending for verification
       });
       await profile.save();
     } else {
@@ -138,12 +178,15 @@ const createDriverProfile = async (req, res) => {
         gender,
         age,
         location,
-        profileCompleted: true
+        profileCompleted: true,
+        verificationStatus: 'pending'  // Set to pending for verification
       });
     }
 
-    console.log("✅ Driver Profile Saved:", profile);
+    // Auto-create verification request
+    await autoCreateVerificationRequest(req.userId, profile._id);
 
+    console.log("✅ Driver Profile Saved:", profile);
     res.status(201).json({ success: true, profile });
   } catch (err) {
     console.error("❌ [CREATE DRIVER PROFILE ERROR]:", err);

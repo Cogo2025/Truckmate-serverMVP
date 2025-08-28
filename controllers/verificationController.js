@@ -6,7 +6,6 @@ const User = require('../models/User');
 const createVerificationRequest = async (req, res) => {
   try {
     const driverProfile = await DriverProfile.findOne({ userId: req.userId });
-    
     if (!driverProfile) {
       return res.status(404).json({ error: "Driver profile not found" });
     }
@@ -21,11 +20,13 @@ const createVerificationRequest = async (req, res) => {
       return res.status(400).json({ error: "Verification request already pending" });
     }
 
+    // Create verification request with updated document structure
     const verificationRequest = await VerificationRequest.create({
       driverId: req.userId,
       profileId: driverProfile._id,
       documents: {
-        licensePhoto: driverProfile.licensePhoto,
+        licensePhotoFront: driverProfile.licensePhotoFront,  // Updated field
+        licensePhotoBack: driverProfile.licensePhotoBack,    // Updated field
         profilePhoto: driverProfile.profilePhoto
       }
     });
@@ -42,6 +43,7 @@ const createVerificationRequest = async (req, res) => {
       requestId: verificationRequest._id
     });
   } catch (err) {
+    console.error('❌ Create verification error:', err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -84,14 +86,19 @@ const getPendingVerifications = async (req, res) => {
           'profile.licenseExpiryDate': 1,
           'profile.experience': 1,
           'profile.location': 1,
+          'profile.age': 1,
+          'profile.gender': 1,
+          'profile.knownTruckTypes': 1,
           documents: 1
         }
       },
       { $sort: { createdAt: -1 } }
     ]);
 
+    console.log(`✅ Found ${requests.length} pending verification requests`);
     res.status(200).json(requests);
   } catch (err) {
+    console.error('❌ Get pending verifications error:', err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -120,7 +127,6 @@ const processVerification = async (req, res) => {
 
     // Update driver profile
     const updateData = { verificationStatus: action };
-
     if (action === 'approved') {
       updateData.approvedBy = req.adminId;
       updateData.approvedAt = new Date();
@@ -137,6 +143,7 @@ const processVerification = async (req, res) => {
       requestId: request._id
     });
   } catch (err) {
+    console.error('❌ Process verification error:', err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -158,12 +165,12 @@ const getVerificationStats = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-// Add this method to your verificationController.js
+
+// Get all verifications (Admin panel)
 const getAllVerifications = async (req, res) => {
   try {
     console.log('📥 Fetching all verifications...');
     
-    // First check if we have any verification requests
     const requestCount = await VerificationRequest.countDocuments();
     console.log(`Found ${requestCount} total verification requests`);
     
@@ -219,6 +226,9 @@ const getAllVerifications = async (req, res) => {
           'profile.licenseExpiryDate': 1,
           'profile.experience': { $ifNull: ['$profile.experience', 'N/A'] },
           'profile.location': { $ifNull: ['$profile.location', 'N/A'] },
+          'profile.age': { $ifNull: ['$profile.age', 'N/A'] },
+          'profile.gender': { $ifNull: ['$profile.gender', 'N/A'] },
+          'profile.knownTruckTypes': { $ifNull: ['$profile.knownTruckTypes', []] },
           documents: 1
         }
       },
@@ -229,13 +239,14 @@ const getAllVerifications = async (req, res) => {
     res.status(200).json(requests);
   } catch (err) {
     console.error('❌ Error fetching all verifications:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fetch verification history',
-      details: err.message 
+      details: err.message
     });
   }
 };
 
+// Get driver verification status
 const getDriverVerificationStatus = async (req, res) => {
   try {
     const driverId = req.userId;
@@ -243,7 +254,7 @@ const getDriverVerificationStatus = async (req, res) => {
     // Check if driver profile exists
     const driverProfile = await DriverProfile.findOne({ userId: driverId });
     if (!driverProfile) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: "Driver profile not found",
         status: 'no_profile',
         canAccessJobs: false
@@ -280,11 +291,9 @@ const getDriverVerificationStatus = async (req, res) => {
 const checkDriverAccess = async (req, res) => {
   try {
     const driverId = req.userId;
-    
     const driverProfile = await DriverProfile.findOne({ userId: driverId });
-    
     const canAccess = driverProfile && driverProfile.verificationStatus === 'approved';
-    
+
     res.status(200).json({
       canAccessJobs: canAccess,
       verificationStatus: driverProfile?.verificationStatus || 'no_profile',
@@ -299,8 +308,8 @@ const checkDriverAccess = async (req, res) => {
 const resubmitVerification = async (req, res) => {
   try {
     const driverId = req.userId;
-    
     const driverProfile = await DriverProfile.findOne({ userId: driverId });
+
     if (!driverProfile) {
       return res.status(404).json({ error: "Driver profile not found" });
     }
@@ -314,7 +323,8 @@ const resubmitVerification = async (req, res) => {
       driverId: driverId,
       profileId: driverProfile._id,
       documents: {
-        licensePhoto: driverProfile.licensePhoto,
+        licensePhotoFront: driverProfile.licensePhotoFront,
+        licensePhotoBack: driverProfile.licensePhotoBack,
         profilePhoto: driverProfile.profilePhoto
       }
     });
@@ -342,8 +352,7 @@ module.exports = {
   processVerification,
   getVerificationStats,
   getAllVerifications,
-  getDriverVerificationStatus, // New
-  checkDriverAccess, // New
-  resubmitVerification // New
+  getDriverVerificationStatus,
+  checkDriverAccess,
+  resubmitVerification
 };
-

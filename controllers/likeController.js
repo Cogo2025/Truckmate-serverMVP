@@ -264,8 +264,16 @@ exports.getOwnerLikedDrivers = async (req, res) => {
     const driversWithProfile = await Promise.all(
       users.map(async (user) => {
         const profile = await DriverProfile.findOne({ userId: user.googleId }).lean().exec();
+        
+        // Get the correct photo URL - prioritize profile photo from DriverProfile
+        let photoUrl = user.photoUrl;
+        if (profile && profile.profilePhoto) {
+          photoUrl = profile.profilePhoto;
+        }
+        
         return {
           ...user,
+          photoUrl: photoUrl, // Add the correct photo URL
           profile,
           likedDate: likes.find(l => l.likedItemId === user.googleId)?.createdAt
         };
@@ -281,7 +289,6 @@ exports.getOwnerLikedDrivers = async (req, res) => {
     });
   }
 };
-
 // Check if owner has liked a specific driver
 exports.checkDriverLike = async (req, res) => {
   try {

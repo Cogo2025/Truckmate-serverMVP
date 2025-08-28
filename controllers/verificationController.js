@@ -17,7 +17,10 @@ const createVerificationRequest = async (req, res) => {
     });
 
     if (existingRequest) {
-      return res.status(400).json({ error: "Verification request already pending" });
+      return res.status(400).json({ 
+        error: "Verification request already pending",
+        existingRequestId: existingRequest._id
+      });
     }
 
     // Create verification request with updated document structure
@@ -69,8 +72,8 @@ const getPendingVerifications = async (req, res) => {
           as: 'profile'
         }
       },
-      { $unwind: '$driver' },
-      { $unwind: '$profile' },
+      { $unwind: { path: '$driver', preserveNullAndEmptyArrays: true } },
+      { $unwind: { path: '$profile', preserveNullAndEmptyArrays: true } },
       {
         $project: {
           _id: 1,
@@ -78,17 +81,18 @@ const getPendingVerifications = async (req, res) => {
           status: 1,
           priority: 1,
           createdAt: 1,
-          'driver.name': 1,
-          'driver.email': 1,
-          'driver.phone': 1,
-          'profile.licenseNumber': 1,
-          'profile.licenseType': 1,
+          'driver.name': { $ifNull: ['$driver.name', 'Unknown Driver'] },
+          'driver.email': { $ifNull: ['$driver.email', 'N/A'] },
+          'driver.phone': { $ifNull: ['$driver.phone', 'N/A'] },
+          'profile.name': { $ifNull: ['$profile.name', 'N/A'] },
+          'profile.licenseNumber': { $ifNull: ['$profile.licenseNumber', 'N/A'] },
+          'profile.licenseType': { $ifNull: ['$profile.licenseType', 'N/A'] },
           'profile.licenseExpiryDate': 1,
-          'profile.experience': 1,
-          'profile.location': 1,
-          'profile.age': 1,
-          'profile.gender': 1,
-          'profile.knownTruckTypes': 1,
+          'profile.experience': { $ifNull: ['$profile.experience', 'N/A'] },
+          'profile.location': { $ifNull: ['$profile.location', 'N/A'] },
+          'profile.age': { $ifNull: ['$profile.age', 'N/A'] },
+          'profile.gender': { $ifNull: ['$profile.gender', 'N/A'] },
+          'profile.knownTruckTypes': { $ifNull: ['$profile.knownTruckTypes', []] },
           documents: 1
         }
       },
@@ -108,6 +112,8 @@ const processVerification = async (req, res) => {
   try {
     const { requestId } = req.params;
     const { action, notes } = req.body;
+
+    console.log(`📝 Processing verification: ${requestId} with action: ${action}`);
 
     const request = await VerificationRequest.findById(requestId);
     if (!request) {
@@ -130,13 +136,15 @@ const processVerification = async (req, res) => {
     if (action === 'approved') {
       updateData.approvedBy = req.adminId;
       updateData.approvedAt = new Date();
+      updateData.rejectionReason = undefined; // Clear any previous rejection reason
     } else if (action === 'rejected') {
-      updateData.rejectionReason = notes;
+      updateData.rejectionReason = notes || 'No specific reason provided';
       updateData.$inc = { resubmissionCount: 1 };
     }
 
     await DriverProfile.findByIdAndUpdate(request.profileId, updateData);
 
+    console.log(`✅ Driver ${action} successfully`);
     res.status(200).json({
       success: true,
       message: `Driver ${action} successfully`,
@@ -166,7 +174,7 @@ const getVerificationStats = async (req, res) => {
   }
 };
 
-// Get all verifications (Admin panel)
+// Get all verifications (Admin panel - this is what "view all" should call)
 const getAllVerifications = async (req, res) => {
   try {
     console.log('📥 Fetching all verifications...');
@@ -221,6 +229,7 @@ const getAllVerifications = async (req, res) => {
           'driver.name': { $ifNull: ['$driver.name', 'Unknown Driver'] },
           'driver.email': { $ifNull: ['$driver.email', 'N/A'] },
           'driver.phone': { $ifNull: ['$driver.phone', 'N/A'] },
+          'profile.name': { $ifNull: ['$profile.name', 'N/A'] },
           'profile.licenseNumber': { $ifNull: ['$profile.licenseNumber', 'N/A'] },
           'profile.licenseType': { $ifNull: ['$profile.licenseType', 'N/A'] },
           'profile.licenseExpiryDate': 1,

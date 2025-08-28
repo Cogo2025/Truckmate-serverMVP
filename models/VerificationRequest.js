@@ -36,4 +36,8 @@ const verificationRequestSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+// Index for better performance
+verificationRequestSchema.index({ driverId: 1, status: 1 });
+verificationRequestSchema.index({ status: 1, createdAt: -1 });
+
 module.exports = mongoose.model('VerificationRequest', verificationRequestSchema);

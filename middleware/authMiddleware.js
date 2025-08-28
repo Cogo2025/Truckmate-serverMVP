@@ -28,24 +28,66 @@ const authMiddleware = async (req, res, next) => {
     }
 
     const { uid, name, email, phone_number, picture } = decodedToken;
-    console.log(`✅ Authenticated user with UID: ${uid}`);
     
-    // Set UID in request for downstream use
-    req.userId = uid;
+    // *** CRITICAL FIX: Ensure consistent UID format ***
+    const sanitizedUid = uid.toString().trim();
+    
+    if (!sanitizedUid || sanitizedUid.length < 10) {
+      console.warn('🚫 Invalid UID format:', sanitizedUid);
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'Invalid user identifier'
+      });
+    }
 
-    // Find or create user in database
-    let user = await User.findOne({ googleId: uid }).lean();
+    console.log(`✅ Authenticated user with UID: ${sanitizedUid}`);
+    
+    // *** CRITICAL: Use sanitized UID consistently ***
+    req.userId = sanitizedUid;
+
+    // Find or create user in database using sanitized UID
+    let user = await User.findOne({ googleId: sanitizedUid }).lean();
     
     if (!user) {
-      console.log(`🆕 Creating new user record for UID: ${uid}`);
-      user = await User.create({
-        googleId: uid,
-        name: name || 'Unknown',
-        email: email || null,
-        phone: phone_number || '',
-        photoUrl: picture || null,
-        role: 'unassigned', // Default role until set
-        isActive: true
+      console.log(`🆕 Creating new user record for UID: ${sanitizedUid}`);
+      
+      // *** CRITICAL: Use findOneAndUpdate with upsert to prevent race conditions ***
+      user = await User.findOneAndUpdate(
+        { googleId: sanitizedUid },
+        {
+          $set: {
+            googleId: sanitizedUid,
+            name: name || 'Unknown',
+            email: email || null,
+            phone: phone_number || '',
+            photoUrl: picture || null,
+            role: 'unassigned', // Default role until set
+            isActive: true,
+            lastLogin: new Date()
+          }
+        },
+        {
+          upsert: true,
+          new: true,
+          runValidators: true
+        }
+      ).lean();
+      
+      console.log(`✅ User record created/found: ${user.googleId}`);
+    } else {
+      // Update last login for existing users
+      await User.findOneAndUpdate(
+        { googleId: sanitizedUid },
+        { $set: { lastLogin: new Date() } }
+      );
+    }
+
+    // *** CRITICAL: Double-check userId consistency ***
+    if (req.userId !== user.googleId) {
+      console.error(`🚨 UID MISMATCH: req.userId=${req.userId}, user.googleId=${user.googleId}`);
+      return res.status(500).json({
+        error: 'Internal error',
+        message: 'User identifier mismatch'
       });
     }
 
@@ -54,19 +96,21 @@ const authMiddleware = async (req, res, next) => {
 
     // Role-based access control check
     if (req.requiredRole && user.role !== req.requiredRole) {
-  // Allow users with unassigned roles to create their first profile
-  if (user.role === 'unassigned' && req.method === 'POST') {
-    console.log(`ℹ️ Allowing unassigned user ${user.googleId} to create ${req.requiredRole} profile`);
-  } else {
-    console.warn(`🚫 Role mismatch - Required: ${req.requiredRole}, Actual: ${user.role}`);
-    return res.status(403).json({
-      error: 'Forbidden',
-      message: 'Insufficient permissions'
-    });
-  }
-}
+      // Allow users with unassigned roles to create their first profile
+      if (user.role === 'unassigned' && req.method === 'POST') {
+        console.log(`ℹ️ Allowing unassigned user ${user.googleId} to create ${req.requiredRole} profile`);
+      } else {
+        console.warn(`🚫 Role mismatch - Required: ${req.requiredRole}, Actual: ${user.role}`);
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Insufficient permissions'
+        });
+      }
+    }
 
-
+    // *** ADDITIONAL LOGGING FOR DEBUGGING ***
+    console.log(`🔐 Auth success: userId=${req.userId}, role=${user.role}, method=${req.method}`);
+    
     next();
 
   } catch (error) {

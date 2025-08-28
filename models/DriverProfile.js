@@ -1,11 +1,15 @@
-
 const mongoose = require('mongoose');
+
 const driverProfileSchema = new mongoose.Schema({
-  userId: { type: String, required: true, unique: true },
-  name: { type: String }, 
-  profilePhoto: String, // Cloudinary URL
-  licensePhotoFront: String, // NEW: Front license photo URL
-  licensePhotoBack: String,  // NEW: Back license photo URL
+  userId: { 
+    type: String, 
+    required: true, 
+    unique: true  // This ensures no duplicates
+  },
+  name: { type: String },
+  profilePhoto: String,
+  licensePhotoFront: String,
+  licensePhotoBack: String,
   licenseNumber: String,
   licenseExpiryDate: Date,
   knownTruckTypes: [String],
@@ -26,5 +30,7 @@ const driverProfileSchema = new mongoose.Schema({
   resubmissionCount: { type: Number, default: 0 }
 }, { timestamps: true });
 
+// Add compound index for better performance and additional safety
+driverProfileSchema.index({ userId: 1 }, { unique: true });
 
 module.exports = mongoose.model('DriverProfile', driverProfileSchema);

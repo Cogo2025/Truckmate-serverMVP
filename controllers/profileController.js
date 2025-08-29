@@ -288,9 +288,16 @@ const updateDriverProfile = async (req, res) => {
         fieldsBeingUpdated.push('licensePhotoBack');
       }
       if (currentProfile.verificationStatus === 'rejected') {
-  // If profile was rejected and user is updating, automatically resubmit
-  requiresVerification = true;
-  console.log("🔄 Auto-resubmitting rejected verification");
+  // Check if the update is specifically for resubmission
+  const isResubmission = req.body.resubmitVerification === 'true';
+  
+  if (isResubmission) {
+    requiresVerification = true;
+    console.log("🔄 Auto-resubmitting rejected verification");
+    updateData.verificationStatus = 'pending';
+    updateData.verificationRequestedAt = new Date();
+    updateData.rejectionReason = undefined;
+  }
 }
     }
 

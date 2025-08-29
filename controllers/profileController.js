@@ -725,6 +725,7 @@ const updateAvailability = async (req, res) => {
 };
 
 // Get available drivers
+// Get available drivers - UPDATED to sort by createdAt
 const getAvailableDrivers = async (req, res) => {
   try {
     const { location, truckType } = req.query;
@@ -765,9 +766,12 @@ const getAvailableDrivers = async (req, res) => {
           licenseNumber: '$profile.licenseNumber',
           truckTypes: '$profile.knownTruckTypes',
           licensePhotoFront: '$profile.licensePhotoFront',
-          licensePhotoBack: '$profile.licensePhotoBack'
+          licensePhotoBack: '$profile.licensePhotoBack',
+          createdAt: '$profile.createdAt', // Include createdAt field
+          updatedAt: '$profile.updatedAt'  // Include updatedAt field
         }
-      }
+      },
+      { $sort: { createdAt: -1 } } // Sort by createdAt descending (newest first)
     ]);
 
     res.status(200).json({ drivers: availableDrivers });

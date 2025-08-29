@@ -236,7 +236,8 @@ const getJobs = async (req, res) => {
 
 const getJobsByOwner = async (req, res) => {
   try {
-    const jobs = await JobPost.find({ ownerId: req.userId });
+    // Only fetch jobs for the currently authenticated owner
+    const jobs = await JobPost.find({ ownerId: req.userId }).sort({ createdAt: -1 });
     res.status(200).json(jobs);
   } catch (err) {
     res.status(500).json({ error: err.message });

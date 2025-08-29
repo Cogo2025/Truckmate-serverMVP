@@ -287,6 +287,11 @@ const updateDriverProfile = async (req, res) => {
         updateData.licensePhotoBack = req.files['licensePhotoBack'][0].path;
         fieldsBeingUpdated.push('licensePhotoBack');
       }
+      if (currentProfile.verificationStatus === 'rejected') {
+  // If profile was rejected and user is updating, automatically resubmit
+  requiresVerification = true;
+  console.log("🔄 Auto-resubmitting rejected verification");
+}
     }
 
     // Check if name is being updated

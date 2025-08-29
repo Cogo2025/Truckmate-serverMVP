@@ -338,7 +338,6 @@ const checkDriverAccess = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 // Resubmit verification after rejection
 const resubmitVerification = async (req, res) => {
   try {
@@ -351,6 +350,18 @@ const resubmitVerification = async (req, res) => {
 
     if (driverProfile.verificationStatus !== 'rejected') {
       return res.status(400).json({ error: "Can only resubmit rejected verifications" });
+    }
+
+    // Check if there's already a pending request
+    const existingPendingRequest = await VerificationRequest.findOne({
+      driverId: driverId,
+      status: 'pending'
+    });
+
+    if (existingPendingRequest) {
+      return res.status(400).json({ 
+        error: "You already have a pending verification request" 
+      });
     }
 
     const verificationRequest = await VerificationRequest.create({
@@ -366,6 +377,7 @@ const resubmitVerification = async (req, res) => {
     await DriverProfile.findByIdAndUpdate(driverProfile._id, {
       verificationStatus: 'pending',
       verificationRequestedAt: new Date(),
+      rejectionReason: undefined,
       $inc: { resubmissionCount: 1 }
     });
 
@@ -375,10 +387,13 @@ const resubmitVerification = async (req, res) => {
       requestId: verificationRequest._id
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('❌ Resubmit verification error:', err);
+    res.status(500).json({ 
+      error: "Failed to resubmit verification",
+      details: err.message 
+    });
   }
 };
-
 module.exports = {
   createVerificationRequest,
   getPendingVerifications,

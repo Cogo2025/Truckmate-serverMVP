@@ -108,9 +108,9 @@ exports.getUserLikes = async (req, res) => {
           
           return {
             ...job,
-            ownerId: ownerProfile ? {
+            owner: ownerProfile ? {
               companyName: ownerProfile.companyName,
-              photoUrl: ownerProfile.photoUrl
+              photoBase64: ownerProfile.photoBase64 // ✅ Change photoUrl to photoBase64
             } : {
               companyName: 'Unknown Company',
               photoUrl: null

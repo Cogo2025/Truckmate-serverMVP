@@ -1,27 +1,28 @@
 // routes/authRoutes.js
 const express = require('express');
 const router = express.Router();
-const { googleLogin } = require('../controllers/authController');
+const { phoneLogin, googleLogin } = require('../controllers/authController');
 const { authMiddleware } = require('../middleware/authMiddleware');
 const User = require('../models/User');
 
-// 🔐 Login with Google
+// 📱 Phone Login/Registration
+router.post('/phone-login', phoneLogin);
+
+// 🔍 Legacy Google Login (optional - keep for backward compatibility)
 router.post('/google-login', googleLogin);
 
 // ✅ Get current authenticated user
 router.get('/me', authMiddleware, async (req, res) => {
   try {
-    // Find user by googleId from the authenticated request
     const user = await User.findOne({ googleId: req.userId });
     
     if (!user) {
       return res.status(404).json({
         error: 'User not found',
-        message: 'No user exists with this Google ID'
+        message: 'No user exists with this ID'
       });
     }
 
-    // Return user data (excluding sensitive fields)
     const userData = {
       _id: user._id,
       googleId: user.googleId,

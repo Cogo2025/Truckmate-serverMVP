@@ -13,31 +13,37 @@ const generateToken = (adminId) => {
   });
 };
 
-// Initial admin login or setup
+// ✅ FIXED: Initial admin login or setup
 const initialLogin = async (req, res) => {
   try {
     const { username, password } = req.body;
+
+    console.log('🔐 Initial login attempt for:', username);
 
     // Check if any admin exists
     const existingAdmin = await Admin.findOne({ username });
 
     if (!existingAdmin) {
-      // If no admin exists → create the first admin
+      // ✅ FIXED: Only allow creation with correct default credentials
       if (username !== '123user' || password !== '123user') {
+        console.log('❌ Invalid initial credentials');
         return res.status(401).json({
+          success: false,
           error: "Invalid initial credentials. Use default admin: 123user / 123user"
         });
       }
 
+      console.log('📝 Creating first admin...');
       const firstAdmin = await Admin.create({
         username: '123user',
-        password: '123user',
+        password: '123user',  // Will be hashed by pre-save hook
         isFirstLogin: true,
         isActive: true
       });
 
       const token = generateToken(firstAdmin._id);
 
+      console.log('✅ First admin created successfully');
       return res.status(200).json({
         success: true,
         message: "First admin created successfully.",
@@ -49,10 +55,14 @@ const initialLogin = async (req, res) => {
         }
       });
     } else {
-      // If admin exists → login validation
+      // ✅ FIXED: Admin exists, validate password using comparePassword method
+      console.log('🔍 Validating password for existing admin...');
       const isPasswordCorrect = await existingAdmin.comparePassword(password);
+      
       if (!isPasswordCorrect) {
+        console.log('❌ Invalid password');
         return res.status(401).json({
+          success: false,
           error: "Invalid password"
         });
       }
@@ -62,6 +72,7 @@ const initialLogin = async (req, res) => {
 
       const token = generateToken(existingAdmin._id);
 
+      console.log('✅ Login successful');
       return res.status(200).json({
         success: true,
         message: "Login successful",
@@ -75,8 +86,9 @@ const initialLogin = async (req, res) => {
       });
     }
   } catch (err) {
-    console.error('Initial login error:', err);
+    console.error('❌ Initial login error:', err);
     res.status(500).json({
+      success: false,
       error: "Server error",
       details: err.message
     });
@@ -94,19 +106,27 @@ const changePassword = async (req, res) => {
 
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({
+        success: false,
         error: "New password must be at least 6 characters long"
       });
     }
 
     const admin = await Admin.findById(adminId);
     if (!admin) {
-      return res.status(404).json({ error: "Admin not found" });
+      return res.status(404).json({ 
+        success: false,
+        error: "Admin not found" 
+      });
     }
 
+    // ✅ FIXED: Only check current password if not first login
     if (!admin.isFirstLogin) {
       const isCurrentPasswordCorrect = await admin.comparePassword(currentPassword);
       if (!isCurrentPasswordCorrect) {
-        return res.status(401).json({ error: "Current password is incorrect" });
+        return res.status(401).json({ 
+          success: false,
+          error: "Current password is incorrect" 
+        });
       }
     }
 
@@ -114,10 +134,17 @@ const changePassword = async (req, res) => {
     admin.isFirstLogin = false;
     await admin.save();
 
-    res.status(200).json({ success: true, message: "Password changed successfully" });
+    res.status(200).json({ 
+      success: true, 
+      message: "Password changed successfully" 
+    });
   } catch (err) {
     console.error('Change password error:', err);
-    res.status(500).json({ error: "Server error", details: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: "Server error", 
+      details: err.message 
+    });
   }
 };
 
@@ -128,16 +155,25 @@ const createNewAdmin = async (req, res) => {
     const createdBy = req.adminId;
 
     if (!username || !password) {
-      return res.status(400).json({ error: "Username and password are required" });
+      return res.status(400).json({ 
+        success: false,
+        error: "Username and password are required" 
+      });
     }
 
     if (password.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters long" });
+      return res.status(400).json({ 
+        success: false,
+        error: "Password must be at least 6 characters long" 
+      });
     }
 
     const existingAdmin = await Admin.findOne({ username });
     if (existingAdmin) {
-      return res.status(400).json({ error: "Username already exists" });
+      return res.status(400).json({ 
+        success: false,
+        error: "Username already exists" 
+      });
     }
 
     const newAdmin = await Admin.create({
@@ -159,7 +195,11 @@ const createNewAdmin = async (req, res) => {
     });
   } catch (err) {
     console.error('Create admin error:', err);
-    res.status(500).json({ error: "Server error", details: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: "Server error", 
+      details: err.message 
+    });
   }
 };
 
@@ -256,7 +296,11 @@ const getDashboardData = async (req, res) => {
     });
   } catch (err) {
     console.error('Dashboard data error:', err);
-    res.status(500).json({ error: "Server error", details: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: "Server error", 
+      details: err.message 
+    });
   }
 };
 
@@ -293,7 +337,8 @@ const getAllDrivers = async (req, res) => {
             location: 1,
             age: 1,
             gender: 1,
-            knownTruckTypes: 1
+            knownTruckTypes: 1,
+            verificationStatus: 1
           }
         }
       },
@@ -303,7 +348,11 @@ const getAllDrivers = async (req, res) => {
     res.status(200).json({ success: true, drivers });
   } catch (err) {
     console.error('Get drivers error:', err);
-    res.status(500).json({ error: "Server error", details: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: "Server error", 
+      details: err.message 
+    });
   }
 };
 
@@ -345,7 +394,11 @@ const getAllOwners = async (req, res) => {
     res.status(200).json({ success: true, owners });
   } catch (err) {
     console.error('Get owners error:', err);
-    res.status(500).json({ error: "Server error", details: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: "Server error", 
+      details: err.message 
+    });
   }
 };
 
@@ -363,7 +416,10 @@ const getVerificationStats = async (req, res) => {
       verificationStats: { pending, approved, rejected }
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
   }
 };
 

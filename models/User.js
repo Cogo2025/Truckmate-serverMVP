@@ -4,8 +4,8 @@ const userSchema = new mongoose.Schema({
   googleId: { 
     type: String, 
     required: true, 
-    unique: true,  // Ensure no duplicate Google IDs
-    index: true    // Index for faster lookups
+    unique: true,
+    index: true
   },
   name: { 
     type: String, 
@@ -14,15 +14,17 @@ const userSchema = new mongoose.Schema({
   },
   email: { 
     type: String, 
-    required: true,
-    unique: true,
+    required: false,
     lowercase: true,
-    trim: true
+    trim: true,
+    sparse: true,     // Changed: sparse index allows multiple nulls
+    index: true       // Changed: Moved index option here
   },
   phone: { 
     type: String,
     required: true,
-    trim: true
+    trim: true,
+    index: true
   },
   photoUrl: { 
     type: String,
@@ -48,6 +50,11 @@ const userSchema = new mongoose.Schema({
   registrationCompleted: {
     type: Boolean,
     default: false
+  },
+  authProvider: {
+    type: String,
+    enum: ['google', 'phone'],
+    default: 'phone'
   }
 }, { 
   timestamps: true,
@@ -55,8 +62,19 @@ const userSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Compound index for better performance
+// Compound indexes for better performance
 userSchema.index({ googleId: 1, role: 1 });
-userSchema.index({ email: 1, isActive: 1 });
+userSchema.index({ phone: 1, isActive: 1 });
+
+// Removed: The old sparse index that was causing issues
+// userSchema.index({ email: 1, isActive: 1 }, { sparse: true });
+
+// Validation to ensure either email or phone exists
+userSchema.pre('save', function(next) {
+  if (!this.email && !this.phone) {
+    next(new Error('Either email or phone must be provided'));
+  }
+  next();
+});
 
 module.exports = mongoose.model('User', userSchema);

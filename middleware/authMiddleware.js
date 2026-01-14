@@ -1,8 +1,7 @@
-const admin = require('../config/firebase'); // Use the centralized config
+const admin = require('../config/firebase');
 const User = require('../models/User');
 
 const authMiddleware = async (req, res, next) => {
-  // Extract token from Authorization header
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -16,7 +15,6 @@ const authMiddleware = async (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    // Verify Firebase ID token
     const decodedToken = await admin.auth().verifyIdToken(token);
     
     if (!decodedToken.uid) {
@@ -29,7 +27,6 @@ const authMiddleware = async (req, res, next) => {
 
     const { uid, name, email, phone_number, picture } = decodedToken;
     
-    // *** CRITICAL FIX: Ensure consistent UID format ***
     const sanitizedUid = uid.toString().trim();
     
     if (!sanitizedUid || sanitizedUid.length < 10) {
@@ -42,34 +39,40 @@ const authMiddleware = async (req, res, next) => {
 
     console.log(`✅ Authenticated user with UID: ${sanitizedUid}`);
     
-    // *** CRITICAL: Use sanitized UID consistently ***
     req.userId = sanitizedUid;
 
-    // Find or create user in database using sanitized UID
     let user = await User.findOne({ googleId: sanitizedUid }).lean();
     
     if (!user) {
       console.log(`🆕 Creating new user record for UID: ${sanitizedUid}`);
       
-      // *** CRITICAL: Use findOneAndUpdate with upsert to prevent race conditions ***
+      // Prepare update data based on available information
+      const updateData = {
+        googleId: sanitizedUid,
+        name: name || 'Unknown',
+        phone: phone_number || '',
+        photoUrl: picture || null,
+        role: 'unassigned',
+        isActive: true,
+        lastLogin: new Date()
+      };
+      
+      // Only set email if it exists (for Google auth)
+      if (email) {
+        updateData.email = email;
+        updateData.authProvider = 'google';
+      } else if (phone_number) {
+        updateData.authProvider = 'phone';
+      }
+      
       user = await User.findOneAndUpdate(
         { googleId: sanitizedUid },
-        {
-          $set: {
-            googleId: sanitizedUid,
-            name: name || 'Unknown',
-            email: email || null,
-            phone: phone_number || '',
-            photoUrl: picture || null,
-            role: 'unassigned', // Default role until set
-            isActive: true,
-            lastLogin: new Date()
-          }
-        },
+        { $set: updateData },
         {
           upsert: true,
           new: true,
-          runValidators: true
+          runValidators: true,
+          setDefaultsOnInsert: true
         }
       ).lean();
       
@@ -82,7 +85,6 @@ const authMiddleware = async (req, res, next) => {
       );
     }
 
-    // *** CRITICAL: Double-check userId consistency ***
     if (req.userId !== user.googleId) {
       console.error(`🚨 UID MISMATCH: req.userId=${req.userId}, user.googleId=${user.googleId}`);
       return res.status(500).json({
@@ -91,12 +93,10 @@ const authMiddleware = async (req, res, next) => {
       });
     }
 
-    // Attach full user object to request
     req.user = user;
 
     // Role-based access control check
     if (req.requiredRole && user.role !== req.requiredRole) {
-      // Allow users with unassigned roles to create their first profile
       if (user.role === 'unassigned' && req.method === 'POST') {
         console.log(`ℹ️ Allowing unassigned user ${user.googleId} to create ${req.requiredRole} profile`);
       } else {
@@ -108,15 +108,13 @@ const authMiddleware = async (req, res, next) => {
       }
     }
 
-    // *** ADDITIONAL LOGGING FOR DEBUGGING ***
-    console.log(`🔐 Auth success: userId=${req.userId}, role=${user.role}, method=${req.method}`);
+    console.log(`🔍 Auth success: userId=${req.userId}, role=${user.role}, method=${req.method}, authProvider=${user.authProvider || 'unknown'}`);
     
     next();
 
   } catch (error) {
-    console.error('🔐 Authentication error:', error.message);
+    console.error('🔒 Authentication error:', error.message);
     
-    // Handle specific Firebase errors
     if (error.code === 'auth/id-token-expired') {
       return res.status(401).json({
         error: 'Token expired',
@@ -131,7 +129,6 @@ const authMiddleware = async (req, res, next) => {
       });
     }
 
-    // Generic error response
     return res.status(500).json({
       error: 'Authentication failed',
       message: 'Could not authenticate user'
@@ -139,7 +136,6 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-// Role-specific middleware wrapper
 const requireRole = (role) => {
   return (req, res, next) => {
     req.requiredRole = role;

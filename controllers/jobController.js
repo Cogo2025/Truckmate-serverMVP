@@ -1,30 +1,18 @@
+// jobController.js
 const JobPost = require('../models/JobPost');
 const DriverProfile = require('../models/DriverProfile');
 const Like = require('../models/Like');
 const User = require('../models/User');
 const mongoose = require('mongoose');
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('../config/cloudinary');
 const multer = require('multer');
+const { Readable } = require('stream');
 
-// Cloudinary storage configuration for job photos
-const jobPhotosStorage = new CloudinaryStorage({
-  cloudinary,
-  params: (req, file) => {
-    return {
-      folder: 'truckmate/jobs',
-      format: 'jpg',
-      public_id: `${req.userId}-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-      transformation: [
-        { width: 800, height: 600, crop: 'limit' },
-        { quality: 'auto' }
-      ]
-    };
-  }
-});
+// ==================== FILE UPLOAD CONFIGURATION ====================
 
+// Use multer memory storage (saves files in memory as buffers)
 const upload = multer({
-  storage: jobPhotosStorage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB
   },
@@ -37,13 +25,44 @@ const upload = multer({
   }
 });
 
+// ==================== CLOUDINARY HELPERS ====================
+
+// Helper to upload buffer to Cloudinary for jobs
+const uploadBufferToCloudinaryJob = (buffer) => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: 'truckmate/jobs',
+        allowed_formats: ['jpg', 'jpeg', 'png', 'gif'],
+        transformation: [
+          { width: 800, height: 600, crop: 'limit' },
+          { quality: 'auto' }
+        ]
+      },
+      (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result.secure_url);
+        }
+      }
+    );
+
+    // Create readable stream from buffer
+    const readableStream = new Readable();
+    readableStream.push(buffer);
+    readableStream.push(null);
+    readableStream.pipe(uploadStream);
+  });
+};
+
 // Helper function to delete job images from Cloudinary
 const deleteJobImages = async (imageUrls) => {
   try {
     if (!imageUrls || imageUrls.length === 0) return;
     
     for (const imageUrl of imageUrls) {
-      if (!imageUrl) continue;
+      if (!imageUrl || imageUrl === '') continue;
       
       // Extract public_id from Cloudinary URL
       const parts = imageUrl.split('/');
@@ -59,13 +78,50 @@ const deleteJobImages = async (imageUrls) => {
   }
 };
 
-// Update createJob function to use Cloudinary
-// jobController.js - Update createJob function
+// Helper to process uploaded job photos
+const processJobPhotos = async (files) => {
+  if (!files || files.length === 0) return [];
+  
+  const uploadPromises = files.map(file => 
+    uploadBufferToCloudinaryJob(file.buffer)
+  );
+  
+  return await Promise.all(uploadPromises);
+};
+
+// ==================== JOB CONTROLLERS ====================
+
+// Create job
 const createJob = async (req, res) => {
   try {
-    // Check if lorryPhotos array exists and has at least one URL
-    if (!req.body.lorryPhotos || req.body.lorryPhotos.length === 0) {
-      return res.status(400).json({ error: "At least one photo is required" });
+    let lorryPhotos = [];
+    
+    // Process uploaded files if they exist
+    if (req.files && req.files.length > 0) {
+      lorryPhotos = await processJobPhotos(req.files);
+    }
+    
+    // Also check if photos are provided in request body (for backward compatibility)
+    if (req.body.lorryPhotos) {
+      try {
+        const bodyPhotos = typeof req.body.lorryPhotos === 'string' 
+          ? JSON.parse(req.body.lorryPhotos) 
+          : req.body.lorryPhotos;
+        
+        if (Array.isArray(bodyPhotos)) {
+          lorryPhotos = [...lorryPhotos, ...bodyPhotos];
+        }
+      } catch (e) {
+        console.log('Error parsing lorryPhotos from body:', e);
+      }
+    }
+
+    // Check if we have at least one photo
+    if (lorryPhotos.length === 0) {
+      return res.status(400).json({ 
+        success: false,
+        error: "At least one photo is required" 
+      });
     }
 
     const job = await JobPost.create({
@@ -84,7 +140,7 @@ const createJob = async (req, res) => {
       },
       description: req.body.description,
       phone: req.body.phone,
-      lorryPhotos: req.body.lorryPhotos, // Use the Cloudinary URLs from request body
+      lorryPhotos: lorryPhotos,
       ownerId: req.userId
     });
 
@@ -100,23 +156,33 @@ const createJob = async (req, res) => {
     });
   }
 };
-// Update deleteJob function to clean up images
+
+// Delete job
 const deleteJob = async (req, res) => {
   try {
     const jobId = req.params.jobId;
     
     if (!mongoose.Types.ObjectId.isValid(jobId)) {
-      return res.status(400).json({ error: "Invalid job ID format" });
+      return res.status(400).json({ 
+        success: false,
+        error: "Invalid job ID format" 
+      });
     }
 
     const job = await JobPost.findById(jobId);
     
     if (!job) {
-      return res.status(404).json({ error: 'Job not found' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'Job not found' 
+      });
     }
 
     if (job.ownerId !== req.userId) {
-      return res.status(403).json({ error: 'You are not authorized to delete this job' });
+      return res.status(403).json({ 
+        success: false,
+        error: 'You are not authorized to delete this job' 
+      });
     }
 
     // Delete images from Cloudinary first
@@ -129,22 +195,31 @@ const deleteJob = async (req, res) => {
       likedType: 'job'
     });
 
-    res.status(200).json({ message: 'Job deleted successfully' });
+    res.status(200).json({ 
+      success: true,
+      message: 'Job deleted successfully' 
+    });
     
   } catch (err) {
     console.error('Error in deleteJob:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
   }
 };
 
-// Update uploadImages function for job photos
+// Upload images for jobs
 const uploadImages = async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: "No files uploaded" });
+      return res.status(400).json({ 
+        success: false,
+        error: "No files uploaded" 
+      });
     }
     
-    const urls = req.files.map(file => file.path);
+    const urls = await processJobPhotos(req.files);
     res.status(200).json({ 
       success: true,
       urls 
@@ -158,24 +233,30 @@ const uploadImages = async (req, res) => {
   }
 };
 
-// Update updateJob function to handle image uploads
+// Update job
 const updateJob = async (req, res) => {
   try {
     const jobId = req.params.jobId;
     const job = await JobPost.findById(jobId);
     
     if (!job) {
-      return res.status(404).json({ error: 'Job not found' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'Job not found' 
+      });
     }
     
     if (job.ownerId !== req.userId) {
-      return res.status(403).json({ error: 'You are not authorized to update this job' });
+      return res.status(403).json({ 
+        success: false,
+        error: 'You are not authorized to update this job' 
+      });
     }
 
     // Handle new image uploads
     let newPhotoUrls = [];
     if (req.files && req.files.length > 0) {
-      newPhotoUrls = req.files.map(file => file.path);
+      newPhotoUrls = await processJobPhotos(req.files);
     }
 
     // Combine existing photos with new ones
@@ -194,14 +275,20 @@ const updateJob = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    res.status(200).json(updatedJob);
+    res.status(200).json({
+      success: true,
+      data: updatedJob
+    });
   } catch (err) {
     console.error('Error in updateJob:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
   }
 };
 
-// Keep all existing functions and add the new ones
+// Get all jobs
 const getJobs = async (req, res) => {
   try {
     const jobs = await JobPost.aggregate([
@@ -227,23 +314,36 @@ const getJobs = async (req, res) => {
       { $sort: { createdAt: -1 } }
     ]);
 
-    res.status(200).json(jobs);
+    res.status(200).json({
+      success: true,
+      data: jobs
+    });
   } catch (err) {
     console.error('Error in getJobs:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
   }
 };
 
+// Get jobs by owner (current user)
 const getJobsByOwner = async (req, res) => {
   try {
-    // Only fetch jobs for the currently authenticated owner
     const jobs = await JobPost.find({ ownerId: req.userId }).sort({ createdAt: -1 });
-    res.status(200).json(jobs);
+    res.status(200).json({
+      success: true,
+      data: jobs
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
   }
 };
 
+// Get jobs for driver with filters
 const getJobsForDriver = async (req, res) => {
   try {
     const filters = {};
@@ -331,16 +431,21 @@ const getJobsForDriver = async (req, res) => {
       { $limit: req.query.limit ? parseInt(req.query.limit) : 100 }
     ]);
     
-    res.status(200).json(jobs);
+    res.status(200).json({
+      success: true,
+      data: jobs
+    });
   } catch (err) {
     console.error('Error in getJobsForDriver:', err);
     res.status(500).json({ 
+      success: false,
       error: 'Failed to fetch jobs',
       details: err.message 
     });
   }
 };
 
+// Get filter options
 const getFilterOptions = async (req, res) => {
   try {
     const [
@@ -378,42 +483,61 @@ const getFilterOptions = async (req, res) => {
         maxSalary = Math.max(...salaries);
       }
     }
+    
     const allWheelsOptions = await JobPost.distinct('variant.wheelsOrFeet');
     const bodyVehicleWheels = ["6 wheels", "8 wheels", "12 wheels", "14 wheels", "16 wheels"];
     const otherWheelsOptions = allWheelsOptions.filter(opt => 
       !bodyVehicleWheels.includes(opt)
     );
+    
     res.status(200).json({
-      truckTypes: truckTypes.filter(Boolean),
-      locations: locations.filter(Boolean),
-      salaryRange: { min: minSalary, max: maxSalary },
-      variantTypes: variantTypes.filter(Boolean),
-      wheelsOrFeetOptions: wheelsOrFeetOptions.filter(Boolean),
-      experienceOptions: experienceOptions.filter(Boolean),
-      dutyTypes: dutyTypes.filter(Boolean),
-      salaryTypes: salaryTypes.filter(Boolean),
-      bodyVehicleWheels: bodyVehicleWheels,
-      otherWheelsOptions: otherWheelsOptions.filter(Boolean),
+      success: true,
+      data: {
+        truckTypes: truckTypes.filter(Boolean),
+        locations: locations.filter(Boolean),
+        salaryRange: { min: minSalary, max: maxSalary },
+        variantTypes: variantTypes.filter(Boolean),
+        wheelsOrFeetOptions: wheelsOrFeetOptions.filter(Boolean),
+        experienceOptions: experienceOptions.filter(Boolean),
+        dutyTypes: dutyTypes.filter(Boolean),
+        salaryTypes: salaryTypes.filter(Boolean),
+        bodyVehicleWheels: bodyVehicleWheels,
+        otherWheelsOptions: otherWheelsOptions.filter(Boolean),
+      }
     });
   } catch (err) {
     console.error('Error in getFilterOptions:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
   }
 };
 
+// Get jobs by owner ID
 const getJobsByOwnerId = async (req, res) => {
   try {
     const jobs = await JobPost.find({ ownerId: req.params.ownerId });
-    res.status(200).json(jobs);
+    res.status(200).json({
+      success: true,
+      data: jobs
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
   }
 };
 
+// Get job details
 const getJobDetails = async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.jobId)) {
-      return res.status(400).json({ error: "Invalid job ID format" });
+      return res.status(400).json({ 
+        success: false,
+        error: "Invalid job ID format" 
+      });
     }
 
     const jobs = await JobPost.aggregate([
@@ -440,7 +564,10 @@ const getJobDetails = async (req, res) => {
     ]);
 
     if (!jobs || jobs.length === 0) {
-      return res.status(404).json({ error: "Job not found" });
+      return res.status(404).json({ 
+        success: false,
+        error: "Job not found" 
+      });
     }
 
     const job = jobs[0];
@@ -461,33 +588,62 @@ const getJobDetails = async (req, res) => {
     }
 
     res.status(200).json({
-      ...job,
-      likeCount,
-      isLiked
+      success: true,
+      data: {
+        ...job,
+        likeCount,
+        isLiked
+      }
     });
   } catch (err) {
     console.error("Error fetching job details:", err);
     res.status(500).json({ 
+      success: false,
       error: "Server error",
       details: err.message 
     });
   }
 };
 
+// Upload job photos
 const uploadJobPhotos = async (req, res) => {
   try {
     const jobId = req.params.jobId;
     const job = await JobPost.findById(jobId);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    if (job.ownerId !== req.userId) return res.status(403).json({ error: 'Not authorized' });
-    const newPhotos = req.files.map(file => file.path);
+    
+    if (!job) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Job not found' 
+      });
+    }
+    
+    if (job.ownerId !== req.userId) {
+      return res.status(403).json({ 
+        success: false,
+        error: 'Not authorized' 
+      });
+    }
+    
+    const newPhotos = await processJobPhotos(req.files);
+    
     job.lorryPhotos = [...(job.lorryPhotos || []), ...newPhotos];
     await job.save();
-    res.status(200).json({ message: 'Photos uploaded', lorryPhotos: job.lorryPhotos });
+    
+    res.status(200).json({ 
+      success: true,
+      message: 'Photos uploaded', 
+      lorryPhotos: job.lorryPhotos 
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
   }
 };
+
+// ==================== EXPORTS ====================
 
 module.exports = {
   createJob,
